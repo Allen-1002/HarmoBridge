@@ -31,7 +31,7 @@
 		<string>_harmobridge._tcp</string>
 	</array>
 	<key>NSHumanReadableCopyright</key>
-	<string>HarmoBridge</string>
+	<string>© 2026 Shenghao Xu. MIT License.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>HarmoBridge 需要访问本地网络：让同一 Wi-Fi 下的鸿蒙手机发现这台 Mac，并接收手机发来的加密通知。不会连接互联网上的任何服务器。</string>
 	<key>NSMicrophoneUsageDescription</key>

@@ -146,3 +146,7 @@ scripts/          # 手机端构建安装脚本
 ## 计划
 
 - 通话桥接：ESP32（经典蓝牙 HFP + USB 串口）让 Mac 接听手机来电。Mac 端已预留 `CallBridge` 接口；实测表明 macOS 自身无法作为 HFP 免提设备连接鸿蒙手机。
+
+## 许可证
+
+[MIT](LICENSE) © 2026 Shenghao Xu (徐晟皓)
