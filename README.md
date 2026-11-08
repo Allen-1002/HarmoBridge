@@ -149,4 +149,4 @@ scripts/          # 手机端构建安装脚本
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 Shenghao Xu (徐晟皓)
+[MIT](LICENSE) © 2026 Shenghao Xu
