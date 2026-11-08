@@ -21,3 +21,8 @@
 *.cer
 *.csr
 *.p7b
+
+# Windows 客户端编译产物
+/windows/dist
+/windows/**/bin
+/windows/**/obj

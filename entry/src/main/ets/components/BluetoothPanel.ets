@@ -230,7 +230,7 @@ export struct BluetoothPanel {
         Card() {
           Column() {
             if (this.nearby.length === 0) {
-              Text(this.scanning ? '正在搜索…' : '点右上角“扫描”查找附近设备。\n要让 Mac 被搜到：在 Mac 上打开“系统设置 > 蓝牙”并保持该页面开着。')
+              Text(this.scanning ? '正在搜索…' : '点右上角“扫描”查找附近设备。\n要让电脑被搜到：Mac 打开“系统设置 > 蓝牙”并保持该页面开着；Windows 打开“设置 > 蓝牙和其他设备”。')
                 .fontSize(13)
                 .fontColor($r('app.color.hb_text2'))
                 .padding(16)

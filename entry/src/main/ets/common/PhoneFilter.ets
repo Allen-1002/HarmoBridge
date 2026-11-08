@@ -16,8 +16,8 @@ export interface SyncSettings {
   paused: boolean;
   blockSensitive: boolean;
   blockedBundles: Array<string>;
-  copyOtp: boolean; // 验证码发送到 Mac 并复制到剪贴板
-  updatedAt: number; // 最近一次修改时间（毫秒），与 Mac 双向同步时“后改的为准”
+  copyOtp: boolean; // 验证码发送到电脑并复制到剪贴板
+  updatedAt: number; // 最近一次修改时间（毫秒），与电脑双向同步时“后改的为准”
 }
 
 function prefs(ctx: common.Context): preferences.Preferences {
@@ -48,7 +48,7 @@ export function saveSettings(ctx: common.Context, s: SyncSettings): void {
   writeSettings(ctx, s);
 }
 
-/** 写入设置（保留 s.updatedAt，用于应用 Mac 同步过来的设置）。 */
+/** 写入设置（保留 s.updatedAt，用于应用电脑同步过来的设置）。 */
 export function writeSettings(ctx: common.Context, s: SyncSettings): void {
   const p = prefs(ctx);
   p.putSync('paused', s.paused);

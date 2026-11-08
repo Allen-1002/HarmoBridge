@@ -1,9 +1,10 @@
 # HarmoBridge
 
-把 **HarmonyOS（鸿蒙）手机** 上的通知同步到 **Mac**，在 macOS 通知中心显示；验证码自动复制到 Mac 剪贴板。全部在局域网内端到端加密传输，不经过任何服务器，也不依赖安卓容器。
+把 **HarmonyOS（鸿蒙）手机** 上的通知同步到 **Mac 和 Windows 电脑**，在系统通知中心显示；验证码自动复制到电脑剪贴板。一台手机可以同时连接多台电脑，一台电脑也可以配对多台手机。全部在局域网内端到端加密传输，不经过任何服务器，也不依赖安卓容器。
 
 - 鸿蒙端：ArkTS + ArkUI（Stage 模型，API 22+，推荐 API 26）
 - Mac 端：Swift + SwiftUI 菜单栏应用（macOS 14+，macOS 26 上使用 Liquid Glass 界面）
+- Windows 端：C# / .NET 10 + WPF 托盘应用（Windows 10 1809+，Windows 11 上使用 Fluent 界面），见 [windows/README.md](windows/README.md)
 
 ## 功能
 
@@ -13,6 +14,7 @@
 - **去重与暂停**：同一条通知不重复弹出；两端都可以一键暂停同步
 - **后台可靠**：手机端通知由系统按需拉起的扩展进程转发，清理后台、熄屏后依然有效，不做任何保活
 - **安全配对**：6 位配对码 + 两端校验码核对；之后每次连接双向认证，所有消息 AES-256-GCM 加密并防重放
+- **多设备**：手机可配对多台电脑（Mac、Windows 混用），通知同时转发到每一台；电脑可配对多台手机，按手机区分通知；同步开关在所有设备间双向同步
 
 ## 工作原理
 
@@ -55,6 +57,12 @@ flowchart LR
 1. 在 [Releases](../../releases) 下载 `HarmoBridge-<版本>-macOS.dmg`，把 HarmoBridge 拖到“应用程序”。
 2. 安装包没有经过 Apple 公证。第一次打开时，在“应用程序”里**右键 HarmoBridge →“打开”**，或者在“系统设置 > 隐私与安全性”中点“仍要打开”。
 3. 首次启动会进入引导，按提示授予权限并生成配对码。
+
+### Windows 端
+
+1. 在 [Releases](../../releases) 下载 `HarmoBridge-<版本>-Windows-x64.exe`（单文件，无需安装），也可以按 [windows/README.md](windows/README.md) 自己编译。
+2. 程序未做代码签名，SmartScreen 提示时点“更多信息 → 仍要运行”；防火墙弹窗时允许“专用网络”。
+3. 首次启动会进入引导；之后程序常驻任务栏托盘。
 
 ### 鸿蒙端
 
@@ -118,6 +126,9 @@ cd mac
 # Mac 端：协议单元测试
 swift test
 
+# Windows 端：在 Mac 上交叉编译单文件 exe（需要 .NET 10 SDK），产物 windows/dist/HarmoBridge.exe
+cd windows && ./build.sh
+
 # 鸿蒙端：命令行构建（需要 DevEco Studio）
 export DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk
 export PATH=/Applications/DevEco-Studio.app/Contents/tools/node/bin:$PATH
@@ -130,12 +141,16 @@ export PATH=/Applications/DevEco-Studio.app/Contents/tools/node/bin:$PATH
 entry/src/main/ets/
 ├── extensionability/NotificationSubscriberExtAbility.ets  # 系统拉起的通知订阅扩展
 ├── common/       # 订阅、蓝牙、加密、配对存储、过滤、转发
-├── components/   # 通用 UI 组件、蓝牙面板、Mac 配对面板
-└── pages/        # 引导、首页（首页/通知/设置）、蓝牙、Mac 连接、应用屏蔽、调试
+├── components/   # 通用 UI 组件、蓝牙面板、电脑配对面板（多台）
+└── pages/        # 引导、首页（首页/通知/设置）、蓝牙、电脑连接、应用屏蔽、调试
 mac/
 ├── Sources/HarmoBridgeCore/   # 协议、加密、会话状态机、过滤与去重（可单元测试）
 ├── Sources/HarmoBridgeMac/    # 菜单栏应用、WebSocket 服务、通知、首次引导
 └── Tests/
+windows/
+├── src/HarmoBridge.Core/      # 与 Mac 端对应的协议核心（跨平台，可在 Mac 上测试）
+├── src/HarmoBridge.Windows/   # WPF 托盘应用、Toast 通知、DPAPI、DNS-SD
+└── tests/
 docs/             # 可行性调研、协议、续签说明
 scripts/          # 手机端构建安装脚本
 ```
@@ -144,8 +159,8 @@ scripts/          # 手机端构建安装脚本
 
 - 鸿蒙端依赖调试签名，每 14 天需要重新签名一次
 - 必须有一台已配对的蓝牙设备（系统规定）
-- Mac 端未经 Apple 公证，首次打开需要手动放行
-- 手机和 Mac 需要在同一局域网内
+- Mac 端未经 Apple 公证、Windows 端未做代码签名，首次打开需要手动放行
+- 手机和电脑需要在同一局域网内；Windows 上当前网络需为“专用网络”
 
 ## 计划
 

@@ -6,7 +6,7 @@ import { PageHeader, auroraBackground } from '../components/UI';
 struct MacLinkPage {
   build() {
     Column() {
-      PageHeader({ title: 'Mac 连接' })
+      PageHeader({ title: '电脑连接' })
       Scroll() {
         Column() {
           MacPanel()

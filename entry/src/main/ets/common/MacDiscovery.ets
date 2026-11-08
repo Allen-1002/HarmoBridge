@@ -1,6 +1,7 @@
 import { mdns } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
+import { fromUtf8 } from './Crypto';
 import { Logger } from './Logger';
 
 export const SERVICE_TYPE = '_harmobridge._tcp';
@@ -9,9 +10,36 @@ export interface FoundMac {
   name: string;
   host: string;
   port: number;
+  id: string; // TXT 记录里的电脑 ID（旧版 Mac 没有，为空）
+  platform: string; // TXT 记录里的平台，未知时为空
 }
 
-/** 用 mDNS 发现局域网内的 HarmoBridge Mac（Mac 端用 Bonjour 广播）。找不到时可手动输入 IP。 */
+/** 服务名形如 “HarmoBridge-电脑名”，返回电脑名。 */
+export function displayName(serviceName: string): string {
+  return serviceName.startsWith('HarmoBridge-') ? serviceName.substring('HarmoBridge-'.length) : serviceName;
+}
+
+function txt(info: mdns.LocalServiceInfo, key: string): string {
+  try {
+    const attrs = info.serviceAttribute;
+    if (attrs === undefined) {
+      return '';
+    }
+    for (const a of attrs) {
+      if (a.key === key) {
+        return fromUtf8(new Uint8Array(a.value));
+      }
+    }
+  } catch (e) {
+    // 部分系统版本不返回 TXT，忽略
+  }
+  return '';
+}
+
+/**
+ * 用 mDNS 发现局域网内的 HarmoBridge 电脑（Mac 用 Bonjour、Windows 用系统 DNS-SD 广播 _harmobridge._tcp）。
+ * 找不到时可手动输入 IP。
+ */
 export class MacDiscovery {
   private service: mdns.DiscoveryService | undefined = undefined;
   private timer: number = -1;
@@ -23,7 +51,9 @@ export class MacDiscovery {
     svc.on('serviceFound', (info: mdns.LocalServiceInfo) => {
       mdns.resolveLocalService(ctx, info).then((r: mdns.LocalServiceInfo) => {
         if (r.host !== undefined && r.port !== undefined) {
-          onFound({ name: r.serviceName, host: r.host.address, port: r.port });
+          onFound({
+            name: r.serviceName, host: r.host.address, port: r.port, id: txt(r, 'id'), platform: txt(r, 'platform'),
+          });
         }
       }).catch((err: BusinessError) => {
         Logger.warn(`mdns resolve failed ${err.code}`);

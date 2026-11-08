@@ -8,7 +8,7 @@ import { blockReason, extractOtp, loadSettings, SyncSettings } from '../common/P
  * 系统通知服务在订阅成功、用户已授权后，把本机通知转发到这里。
  * 生命周期由系统管理：有通知时拉起，一段时间无新通知会被系统自动销毁，不做任何保活。
  *
- * 收到通知后：写入本地记录（App 首页可见）→ 手机端过滤 → 通过已配对的加密连接转发到 Mac。
+ * 收到通知后：写入本地记录（App 首页可见）→ 手机端过滤 → 通过已配对的加密连接转发到每台已配对的电脑。
  */
 export default class NotificationSubscriberExtAbility extends NotificationSubscriberExtensionAbility {
   private forwarder: ExtForwarder | undefined = undefined;
@@ -64,7 +64,7 @@ export default class NotificationSubscriberExtAbility extends NotificationSubscr
     }
   }
 
-  /** 验证码类通知：只把验证码发到 Mac 复制到剪贴板，不转发全文。返回 true 表示已按验证码处理。 */
+  /** 验证码类通知：只把验证码发到电脑复制到剪贴板，不转发全文。返回 true 表示已按验证码处理。 */
   private tryForwardOtp(settings: SyncSettings, info: notificationExtensionSubscription.NotificationInfo,
     title: string, text: string): boolean {
     if (!settings.copyOtp || settings.paused || settings.blockedBundles.indexOf(info.bundleName) >= 0) {

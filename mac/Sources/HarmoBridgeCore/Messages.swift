@@ -7,19 +7,22 @@ public struct Envelope: Codable, Equatable {
     public var deviceName: String?
     public var macId: String?
     public var macName: String?
+    /// v1.1：电脑平台 "mac" / "windows"，旧版手机忽略
+    public var platform: String?
     public var pub: String?
     public var nonce: String?
     public var box: String?
     public var code: String?
 
     public init(t: String, deviceId: String? = nil, deviceName: String? = nil, macId: String? = nil,
-                macName: String? = nil, pub: String? = nil, nonce: String? = nil, box: String? = nil,
-                code: String? = nil) {
+                macName: String? = nil, platform: String? = nil, pub: String? = nil, nonce: String? = nil,
+                box: String? = nil, code: String? = nil) {
         self.t = t
         self.deviceId = deviceId
         self.deviceName = deviceName
         self.macId = macId
         self.macName = macName
+        self.platform = platform
         self.pub = pub
         self.nonce = nonce
         self.box = box

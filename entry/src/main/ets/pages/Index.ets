@@ -71,7 +71,7 @@ struct Index {
     if (this.loaded) {
       this.reload();
     }
-    // 拉取 Mac 上改过的开关
+    // 拉取电脑上改过的开关
     SettingsSync.run(this.ctx(), (changed: boolean) => {
       if (changed) {
         this.settings = loadSettings(this.ctx());
@@ -104,7 +104,7 @@ struct Index {
     saveSettings(this.ctx(), s);
     this.settings = s;
     this.status.syncOn = !s.paused;
-    SettingsSync.run(this.ctx()); // 推送到 Mac
+    SettingsSync.run(this.ctx()); // 推送到所有已配对的电脑
   }
 
   private async openGrant(): Promise<void> {
@@ -143,7 +143,7 @@ struct Index {
         Text('正在检查状态…').fontSize(16).fontColor(Color.White)
       } else if (!this.status.allReady) {
         Text('还差 ' + this.missingSteps() + ' 步完成设置').fontSize(22).fontWeight(FontWeight.Bold).fontColor(Color.White)
-        Text('完成后，手机通知会自动同步到 Mac').fontSize(14).fontColor('#E6FFFFFF').margin({ top: 6 })
+        Text('完成后，手机通知会自动同步到你的电脑').fontSize(14).fontColor('#E6FFFFFF').margin({ top: 6 })
         Button('继续设置')
           .height(38)
           .fontSize(14)
@@ -236,8 +236,8 @@ struct Index {
             NavRow({
               symbol: $r('sys.symbol.desktop'),
               tone: this.status.macReady ? 'success' : 'warning',
-              title: 'Mac',
-              subtitle: this.status.macReady ? this.status.macName + ' · ' + this.status.macHost : '尚未配对',
+              title: '电脑',
+              subtitle: this.status.macReady ? this.status.macName + ' · ' + this.status.macHost : '尚未配对 Mac 或 Windows 电脑',
               chip: this.status.macReady ? '已配对' : '待处理',
               chipTone: this.status.macReady ? 'success' : 'warning',
               showDivider: false,
@@ -388,14 +388,14 @@ struct Index {
         Card() {
           Column() {
             SwitchRow({
-              title: '同步通知到 Mac',
+              title: '同步通知到电脑',
               isOn: !this.settings.paused,
               onToggle: (on: boolean) => this.updateSettings((s: SyncSettings) => {
                 s.paused = !on;
               }),
             })
             SwitchRow({
-              title: '验证码复制到 Mac 剪贴板',
+              title: '验证码复制到电脑剪贴板',
               subtitle: '只发送验证码数字，不发送短信全文',
               isOn: this.settings.copyOtp,
               onToggle: (on: boolean) => this.updateSettings((s: SyncSettings) => {
@@ -433,8 +433,8 @@ struct Index {
             })
             NavRow({
               symbol: $r('sys.symbol.desktop'),
-              title: 'Mac 连接',
-              subtitle: this.status.macReady ? this.status.macName : '未配对',
+              title: '电脑连接',
+              subtitle: this.status.macReady ? (this.status.computerCount > 1 ? this.status.macHost : this.status.macName) : '未配对',
               showDivider: false,
               onTap: () => this.go('pages/MacLinkPage'),
             })

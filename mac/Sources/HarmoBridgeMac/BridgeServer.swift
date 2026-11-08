@@ -24,7 +24,7 @@ final class BridgeServer {
         self.makeMachine = makeMachine
     }
 
-    func start(port: UInt16, serviceName: String) {
+    func start(port: UInt16, serviceName: String, macId: String = "") {
         stop()
         let ws = NWProtocolWebSocket.Options()
         ws.autoReplyPing = true
@@ -35,7 +35,11 @@ final class BridgeServer {
         do {
             guard let p = NWEndpoint.Port(rawValue: port) else { throw NWError.posix(.EINVAL) }
             let l = try NWListener(using: params, on: p)
-            l.service = NWListener.Service(name: serviceName, type: Self.serviceType)
+            // TXT 记录带上电脑 ID 和平台：手机据此识别已配对的电脑并在 IP 变化时自动更新地址
+            var txt = NWTXTRecord()
+            txt["id"] = macId
+            txt["platform"] = "mac"
+            l.service = NWListener.Service(name: serviceName, type: Self.serviceType, domain: nil, txtRecord: txt)
             l.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
@@ -68,9 +72,27 @@ final class BridgeServer {
         sendRaw(text, on: s.conn)
     }
 
-    func sendSettings(_ st: SharedSettings, seq: Int, to id: ObjectIdentifier) {
+    /// seq 为 nil 表示 Mac 主动推送
+    func sendSettings(_ st: SharedSettings, seq: Int?, to id: ObjectIdentifier) {
         guard let s = sessions[id], let frame = s.machine.settingsFrame(st, seq: seq) else { return }
         sendRaw(frame, on: s.conn)
+    }
+
+    /// 已认证（在线）的连接
+    var authenticatedConnections: [ObjectIdentifier] {
+        sessions.filter { $0.value.machine.isAuthenticated }.map(\.key)
+    }
+
+    /// Mac 上改了开关：推送给所有在线手机
+    func broadcastSettings(_ st: SharedSettings, except: ObjectIdentifier? = nil) {
+        for id in authenticatedConnections where id != except {
+            sendSettings(st, seq: nil, to: id)
+        }
+    }
+
+    /// 只断开某台手机（取消配对时）
+    func disconnect(deviceId: String) {
+        for (_, s) in sessions where s.machine.deviceId == deviceId { s.conn.cancel() }
     }
 
     func ack(seq: Int, result: String, to id: ObjectIdentifier) {

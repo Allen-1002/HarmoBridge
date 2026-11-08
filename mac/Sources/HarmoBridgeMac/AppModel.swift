@@ -77,7 +77,7 @@ final class AppModel: ObservableObject {
         server.onEvent = { [weak self] e in
             MainActor.assumeIsolated { self?.handle(e) }
         }
-        server.start(port: port, serviceName: "HarmoBridge-\(macName)")
+        server.start(port: port, serviceName: "HarmoBridge-\(macName)", macId: macId)
         pairedDevices = store.devices()
         loginItemEnabled = SMAppService.mainApp.status == .enabled
         // 首次使用由引导页统一申请权限；完成引导后启动时只确认通知权限
@@ -161,7 +161,7 @@ final class AppModel: ObservableObject {
     func unpair(_ d: KeychainStore.Device) {
         store.remove(deviceId: d.id)
         pairedDevices = store.devices()
-        server.disconnectAll()
+        server.disconnect(deviceId: d.id)
         log("已取消配对：\(d.name)")
     }
 
@@ -337,7 +337,7 @@ final class AppModel: ObservableObject {
             server.ack(seq: seq, result: "pong", to: conn)
         case let .notify(n, seq):
             touch(conn)
-            let result = present(n)
+            let result = present(n, from: connectionDevice[conn] ?? "")
             server.ack(seq: seq, result: result, to: conn)
         case let .settings(st, seq):
             touch(conn)
@@ -347,14 +347,23 @@ final class AppModel: ObservableObject {
             server.ack(seq: seq, result: handleOtp(o), to: conn)
         case let .cancel(ids, seq):
             touch(conn)
-            notifier.remove(ids)
-            ids.forEach(deduper.remove)
+            // 通知 id 按手机区分：不同手机的 hashCode 可能相同
+            let dev = connectionDevice[conn] ?? ""
+            let keys = ids.map { scopedId(dev, $0) }
+            notifier.remove(keys)
+            keys.forEach(deduper.remove)
             log("手机撤销通知 \(ids.count) 条")
             server.ack(seq: seq, result: "removed", to: conn)
         }
     }
 
-    private func present(_ n: MirroredNotification) -> String {
+    private func scopedId(_ deviceId: String, _ id: String) -> String {
+        "\(deviceId.prefix(8))-\(id)"
+    }
+
+    private func present(_ original: MirroredNotification, from deviceId: String) -> String {
+        var n = original
+        n.id = scopedId(deviceId, original.id)
         let result: String
         if paused {
             result = "paused"
@@ -395,6 +404,8 @@ final class AppModel: ObservableObject {
     private func touchSettings() {
         guard !applyingRemote else { return }
         settingsUpdatedAt = Date().timeIntervalSince1970 * 1000
+        // Mac 上改了开关：立即推送给所有在线手机（双向同步）
+        server?.broadcastSettings(sharedSettings)
     }
 
     var sharedSettings: SharedSettings {
@@ -413,6 +424,8 @@ final class AppModel: ObservableObject {
             settingsUpdatedAt = remote.updatedAt
             applyingRemote = false
             log("已同步手机的设置：同步\(remote.paused ? "暂停" : "开启")、敏感过滤\(remote.blockSensitive ? "开" : "关")、验证码复制\(remote.copyOtp ? "开" : "关")")
+            // 转发给其他在线手机
+            server.broadcastSettings(merged, except: conn)
         }
         server.sendSettings(merged, seq: seq, to: conn)
     }

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>HarmoBridge.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 仅用于 X25519：.NET 自带的 ECDiffieHellman 不支持 Curve25519 -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+</Project>

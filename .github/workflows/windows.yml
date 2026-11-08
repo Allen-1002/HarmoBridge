@@ -1,0 +1,40 @@
+name: Windows client
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['windows/**', 'docs/protocol.md', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['windows/**', 'docs/protocol.md', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: 协议单元测试
+        run: dotnet test tests/HarmoBridge.Core.Tests -c Release
+      - name: 打包单文件 exe
+        run: >
+          dotnet publish src/HarmoBridge.Windows -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true -p:DebugType=none -o dist
+      - name: 启动冒烟测试（运行 10 秒不崩溃）
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\HarmoBridge.exe -ArgumentList '--background' -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { Write-Error "HarmoBridge.exe 启动后退出，代码 $($p.ExitCode)"; exit 1 }
+          Stop-Process -Id $p.Id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HarmoBridge-Windows-x64
+          path: windows/dist/HarmoBridge.exe

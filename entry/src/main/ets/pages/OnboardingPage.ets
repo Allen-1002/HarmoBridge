@@ -14,11 +14,11 @@ interface StepInfo {
 }
 
 const STEPS: Array<StepInfo> = [
-  { title: '欢迎使用 HarmoBridge', desc: '把手机通知安全地同步到你的 Mac。数据只在你自己的设备之间加密传输，不经过任何服务器。' },
-  { title: '允许读取通知', desc: '在系统弹出的页面中打开“允许获取本机通知”，并勾选要同步到 Mac 的应用。' },
-  { title: '选择蓝牙设备', desc: '系统要求通知订阅绑定一台已配对的蓝牙设备。推荐直接选择你的 Mac。' },
-  { title: '连接 Mac', desc: '在 Mac 上打开 HarmoBridge，点菜单栏图标 →“配对新手机”。' },
-  { title: '设置完成', desc: '之后不需要保持 App 打开，熄屏或清理后台后，通知也会自动同步到 Mac。' },
+  { title: '欢迎使用 HarmoBridge', desc: '把手机通知安全地同步到你的 Mac 或 Windows 电脑，可以同时连接多台。数据只在你自己的设备之间加密传输，不经过任何服务器。' },
+  { title: '允许读取通知', desc: '在系统弹出的页面中打开“允许获取本机通知”，并勾选要同步到电脑的应用。' },
+  { title: '选择蓝牙设备', desc: '系统要求通知订阅绑定一台已配对的蓝牙设备。推荐直接选择你的电脑（Mac 或 Windows）。' },
+  { title: '连接电脑', desc: '在电脑上打开 HarmoBridge，点“配对新手机”。之后可以在“电脑连接”里继续添加其他电脑。' },
+  { title: '设置完成', desc: '之后不需要保持 App 打开，熄屏或清理后台后，通知也会自动同步到电脑。' },
 ];
 
 @Entry
@@ -120,18 +120,18 @@ struct OnboardingPage {
         this.Hero($r('sys.symbol.bell_fill'))
         Card() {
           Column({ space: 14 }) {
-            this.Feature($r('sys.symbol.bell_fill'), '通知同步', '微信、短信、邮件等通知实时出现在 Mac 通知中心')
-            this.Feature($r('sys.symbol.text_clipboard'), '验证码自动复制', '收到验证码短信，Mac 上直接粘贴')
-            this.Feature($r('sys.symbol.lock_shield'), '本地加密', '只在你的手机和 Mac 之间传输，配对后加密')
+            this.Feature($r('sys.symbol.bell_fill'), '通知同步', '微信、短信、邮件等通知实时出现在电脑通知中心')
+            this.Feature($r('sys.symbol.text_clipboard'), '验证码自动复制', '收到验证码短信，电脑上直接粘贴')
+            this.Feature($r('sys.symbol.lock_shield'), '本地加密', '只在你的手机和电脑之间传输，配对后加密')
           }
           .padding(16)
         }
         Card() {
           Column({ space: 10 }) {
             Text('需要的权限').fontSize(15).fontWeight(FontWeight.Medium).fontColor($r('app.color.hb_text'))
-            this.PermLine('读取本机通知', '必需', '把你选择的应用的通知转发到 Mac；在系统授权页中可逐个选择应用')
-            this.PermLine('蓝牙', '必需', '系统规定读取通知必须绑定一台已配对的蓝牙设备（例如你的 Mac）')
-            this.PermLine('本地网络', '自动', '在同一 Wi-Fi 下把通知加密发送到 Mac，不经过任何服务器')
+            this.PermLine('读取本机通知', '必需', '把你选择的应用的通知转发到电脑；在系统授权页中可逐个选择应用')
+            this.PermLine('蓝牙', '必需', '系统规定读取通知必须绑定一台已配对的蓝牙设备（例如你的电脑）')
+            this.PermLine('本地网络', '自动', '在同一 Wi-Fi 下把通知加密发送到电脑，不经过任何服务器')
           }
           .alignItems(HorizontalAlign.Start)
           .padding(16)
@@ -182,7 +182,7 @@ struct OnboardingPage {
     } else {
       Column({ space: 12 }) {
         this.Hero($r('sys.symbol.checkmark'))
-        Text('可以试试让朋友给你发一条消息，Mac 上会立即弹出通知。')
+        Text('可以试试让朋友给你发一条消息，电脑上会立即弹出通知。')
           .fontSize(14)
           .fontColor($r('app.color.hb_text2'))
           .textAlign(TextAlign.Center)

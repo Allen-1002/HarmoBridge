@@ -9,7 +9,7 @@ interface AppItem {
   name: string;
 }
 
-/** 按应用屏蔽：已授权的应用和最近出现过通知的应用，关掉开关即不再转发到 Mac。 */
+/** 按应用屏蔽：已授权的应用和最近出现过通知的应用，关掉开关即不再转发到电脑。 */
 @Entry
 @Component
 struct AppFilterPage {
@@ -51,7 +51,7 @@ struct AppFilterPage {
       set.push(bundle);
     }
     s.blockedBundles = set;
-    writeSettings(this.ctx(), s); // 应用屏蔽列表不参与与 Mac 的开关同步，不刷新修改时间
+    writeSettings(this.ctx(), s); // 应用屏蔽列表不参与与电脑的开关同步，不刷新修改时间
     this.blocked = set;
   }
 
@@ -60,7 +60,7 @@ struct AppFilterPage {
       PageHeader({ title: '按应用屏蔽' })
       Scroll() {
         Column() {
-          Text('关闭开关的应用，其通知只留在手机上，不会转发到 Mac。要增加可读取的应用，请在“设置 > 选择要读取通知的应用”中授权。')
+          Text('关闭开关的应用，其通知只留在手机上，不会转发到电脑。要增加可读取的应用，请在“设置 > 选择要读取通知的应用”中授权。')
             .fontSize(13)
             .fontColor($r('app.color.hb_text2'))
             .margin({ bottom: 12, left: 4, right: 4 })

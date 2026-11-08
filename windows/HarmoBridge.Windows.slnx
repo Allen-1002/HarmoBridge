@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HarmoBridge.Core/HarmoBridge.Core.csproj" />
+    <Project Path="src/HarmoBridge.Windows/HarmoBridge.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HarmoBridge.Core.Tests/HarmoBridge.Core.Tests.csproj" />
+  </Folder>
+</Solution>

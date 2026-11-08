@@ -63,7 +63,7 @@ struct DebugPage {
     st.paused = !this.syncOn;
     st.blockSensitive = this.blockSensitive;
     saveSettings(this.ctx(), st);
-    this.log(true, `同步到 Mac：${this.syncOn ? '开' : '暂停'}，拦截敏感通知：${this.blockSensitive ? '开' : '关'}`);
+    this.log(true, `同步到电脑：${this.syncOn ? '开' : '暂停'}，拦截敏感通知：${this.blockSensitive ? '开' : '关'}`);
   }
 
   private log(ok: boolean, msg: string): void {
@@ -264,9 +264,9 @@ struct DebugPage {
           this.Btn('查询订阅', () => { this.onQuerySubscribe(); })
         }
 
-        this.Section('转发到 Mac')
+        this.Section('转发到电脑')
         Row() {
-          Text('同步通知到 Mac').fontSize(14).layoutWeight(1)
+          Text('同步通知到电脑').fontSize(14).layoutWeight(1)
           Toggle({ type: ToggleType.Switch, isOn: this.syncOn })
             .onChange((on: boolean) => {
               this.syncOn = on;

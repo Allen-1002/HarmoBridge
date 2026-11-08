@@ -4,7 +4,7 @@ import { common } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { b64, derivePairKey, fromB64, generateX25519, open, randomBytes, sas, seal, X25519Pair } from './Crypto';
 import { Logger, maskText } from './Logger';
-import { deviceId, loadKey, loadMac, MacInfo, saveKey, saveMac } from './PairingStore';
+import { deviceId, findComputer, loadKeyFor, MacInfo, saveComputer } from './PairingStore';
 import { loadSettings, SyncSettings, writeSettings } from './PhoneFilter';
 
 /** 外层帧，字段见 docs/protocol.md */
@@ -14,6 +14,7 @@ interface Envelope {
   deviceName?: string;
   macId?: string;
   macName?: string;
+  platform?: string;
   pub?: string;
   nonce?: string;
   box?: string;
@@ -41,7 +42,7 @@ interface Inner {
   updatedAt?: number;
 }
 
-/** 发往 Mac 的一条通知（字段来自真实 NotificationInfo，或用户手动发出的测试消息）。 */
+/** 发往电脑的一条通知（字段来自真实 NotificationInfo，或用户手动发出的测试消息）。 */
 export interface OutgoingNotification {
   id: string;
   bundleName: string;
@@ -60,24 +61,24 @@ export interface LinkListener {
   onLog: (ok: boolean, msg: string) => void;
   onSas: (sas: string) => void;
   onAck: (seq: number, result: string) => void;
-  /** Mac 同步过来的设置已写入本机（可选，界面用来刷新开关） */
+  /** 电脑同步过来的设置已写入本机（可选，界面用来刷新开关） */
   onSettingsChanged?: () => void;
 }
 
 const CONNECT_TIMEOUT_MS = 10000;
 
 const ERROR_TEXT: Map<string, string> = new Map<string, string>([
-  ['unknown_device', 'Mac 不认识这台手机（未配对或已在 Mac 上取消配对），请重新配对'],
-  ['pairing_closed', 'Mac 未开启配对或配对码已过期，请在 Mac 菜单栏点“配对新手机”'],
+  ['unknown_device', '电脑不认识这台手机（未配对或已在电脑上取消配对），请重新配对'],
+  ['pairing_closed', '电脑未开启配对或配对码已过期，请在电脑上点“配对新手机”'],
   ['bad_pin', '配对码错误'],
   ['auth_failed', '认证失败：密钥不匹配，请重新配对'],
-  ['replay', 'Mac 拒绝了重复或乱序的消息'],
-  ['bad_msg', 'Mac 无法解密消息'],
+  ['replay', '电脑拒绝了重复或乱序的消息'],
+  ['bad_msg', '电脑无法解密消息'],
 ]);
 
 /**
- * 手机 → Mac 的局域网 WebSocket 链路。
- * 只在 App 前台使用，不做后台保活；断线后有限次退避重连。
+ * 手机 → 一台电脑（Mac 或 Windows）的局域网 WebSocket 链路。每台已配对的电脑各用一个 MacLink。
+ * 前台使用时断线后有限次退避重连；通知订阅扩展里按需连接，不做后台保活。
  */
 export class MacLink {
   private ws: webSocket.WebSocket | undefined = undefined;
@@ -103,20 +104,26 @@ export class MacLink {
 
   // foreground=false 用于通知订阅扩展：不发心跳、不自动重连，由调用方按需连接
   private foreground: boolean;
+  // 这条链路对应的电脑；配对新电脑时为空，配对成功后填上
+  private target: MacInfo | undefined;
 
-  constructor(ctx: common.Context, listener: LinkListener, foreground: boolean = true) {
+  constructor(ctx: common.Context, listener: LinkListener, foreground: boolean = true, target?: MacInfo) {
     this.ctx = ctx;
     this.listener = listener;
     this.foreground = foreground;
+    this.target = target;
   }
 
   getState(): LinkState {
     return this.state;
   }
 
+  /** 这条链路对应的、仍处于配对状态的电脑（地址取最新保存的）。 */
   pairedMac(): MacInfo | undefined {
-    const mac = loadMac(this.ctx);
-    return mac !== undefined && loadKey() !== undefined ? mac : undefined;
+    if (this.target === undefined) {
+      return undefined;
+    }
+    return findComputer(this.ctx, this.target.macId);
   }
 
   // ---------- 配对 ----------
@@ -129,7 +136,7 @@ export class MacLink {
     this.stop();
     this.pairPin = pin;
     this.pairKeys = generateX25519();
-    this.pendingMac = { host: host, port: port, macId: '', macName: '' };
+    this.pendingMac = { host: host, port: port, macId: '', macName: '', platform: 'mac' };
     this.open(host, port, 'pairing', () => {
       const req: Envelope = {
         t: 'pair_req',
@@ -147,16 +154,16 @@ export class MacLink {
       return;
     }
     this.sendFrame({ t: 'pair_confirm', box: seal(this.pendingKey, 'pair-confirm-phone') });
-    this.setState('pairing', '等待 Mac 确认');
+    this.setState('pairing', '等待电脑确认');
   }
 
   // ---------- 会话 ----------
 
   connect(): void {
-    const mac = loadMac(this.ctx);
-    const key = loadKey();
+    const mac = this.pairedMac();
+    const key = mac === undefined ? undefined : loadKeyFor(mac.macId);
     if (mac === undefined || key === undefined) {
-      this.listener.onLog(false, '尚未与 Mac 配对');
+      this.listener.onLog(false, '尚未与这台电脑配对');
       return;
     }
     this.closeSocket();
@@ -177,7 +184,7 @@ export class MacLink {
 
   sendNotification(n: OutgoingNotification): boolean {
     if (this.state !== 'online') {
-      this.listener.onLog(false, '未连接到 Mac，消息未发送');
+      this.listener.onLog(false, '未连接到电脑，消息未发送');
       return false;
     }
     const inner: Inner = {
@@ -259,7 +266,7 @@ export class MacLink {
       if (this.ws !== ws) {
         return;
       }
-      this.listener.onLog(false, `WebSocket 错误 ${err.code}: ${err.message}（检查 Mac 地址、端口、是否同一 Wi-Fi）`);
+      this.listener.onLog(false, `WebSocket 错误 ${err.code}: ${err.message}（检查电脑地址、端口、是否同一 Wi-Fi）`);
       if (this.state === 'connecting' || this.state === 'authenticating') {
         this.closeSocket();
         this.setState('error', '连接出错');
@@ -331,7 +338,8 @@ export class MacLink {
     this.pendingKey = derivePairKey(this.pairKeys.keyPair.priKey, phonePub, macPub, this.pairPin);
     if (this.pendingMac !== undefined) {
       this.pendingMac.macId = env.macId === undefined ? '' : env.macId;
-      this.pendingMac.macName = env.macName === undefined ? 'Mac' : env.macName;
+      this.pendingMac.macName = env.macName === undefined ? '电脑' : env.macName;
+      this.pendingMac.platform = env.platform === undefined ? 'mac' : env.platform;
     }
     const code = sas(phonePub, macPub);
     this.setState('awaitingSasConfirm', `请核对校验码 ${code}`);
@@ -341,12 +349,15 @@ export class MacLink {
   private onPairOk(env: Envelope): void {
     if (this.pendingKey === undefined || env.box === undefined ||
       open(this.pendingKey, env.box) !== 'pair-confirm-mac') {
-      this.fail('Mac 的配对确认无效');
+      this.fail('电脑的配对确认无效');
       return;
     }
-    saveKey(this.pendingKey);
     if (this.pendingMac !== undefined) {
-      saveMac(this.ctx, this.pendingMac);
+      if (this.pendingMac.macId.length === 0) {
+        this.pendingMac.macId = `host-${this.pendingMac.host}`;
+      }
+      saveComputer(this.ctx, this.pendingMac, this.pendingKey);
+      this.target = this.pendingMac;
     }
     this.listener.onLog(true, `与 ${this.pendingMac?.macName} 配对成功`);
     this.clearPairing();
@@ -366,7 +377,7 @@ export class MacLink {
   private onAuthOk(env: Envelope): void {
     if (this.key === undefined || env.box === undefined ||
       open(this.key, env.box) !== `ok|${this.sid}|${this.phoneNonce}`) {
-      this.fail('Mac 身份校验失败');
+      this.fail('电脑身份校验失败');
       return;
     }
     this.seq = 0;
@@ -378,7 +389,7 @@ export class MacLink {
     }
   }
 
-  /** 把本机的同步开关发给 Mac。 */
+  /** 把本机的同步开关发给电脑。 */
   sendSettings(): void {
     if (this.state !== 'online') {
       return;
@@ -408,7 +419,7 @@ export class MacLink {
     st.copyOtp = inner.copyOtp === undefined ? st.copyOtp : inner.copyOtp;
     st.updatedAt = inner.updatedAt;
     writeSettings(this.ctx, st);
-    Logger.info(`settings synced from Mac paused=${st.paused} blockSensitive=${st.blockSensitive} copyOtp=${st.copyOtp}`);
+    Logger.info(`settings synced from computer paused=${st.paused} blockSensitive=${st.blockSensitive} copyOtp=${st.copyOtp}`);
     if (this.listener.onSettingsChanged !== undefined) {
       this.listener.onSettingsChanged();
     }
@@ -432,7 +443,7 @@ export class MacLink {
 
   private onError(code: string): void {
     const desc = ERROR_TEXT.get(code);
-    this.listener.onLog(false, `Mac 返回错误 ${code}：${desc === undefined ? '未知错误' : desc}`);
+    this.listener.onLog(false, `电脑返回错误 ${code}：${desc === undefined ? '未知错误' : desc}`);
     if (code === 'unknown_device' || code === 'auth_failed' || code === 'bad_pin' || code === 'pairing_closed') {
       this.autoReconnect = false; // 这些错误重连也不会成功
     }
@@ -524,6 +535,6 @@ export class MacLink {
   private setState(s: LinkState, detail: string): void {
     this.state = s;
     this.listener.onState(s, detail);
-    Logger.info(`MacLink state=${s} ${detail}`);
+    Logger.info(`MacLink[${this.target === undefined ? 'new' : this.target.macId.substring(0, 8)}] state=${s} ${detail}`);
   }
 }

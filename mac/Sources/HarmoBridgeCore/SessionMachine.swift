@@ -143,16 +143,21 @@ public final class SessionMachine {
         }
     }
 
-    /// 给手机回 ack（认证后才有效）。
-    /// 把 Mac 当前的设置发给手机（认证后才有效）。
-    public func settingsFrame(_ st: SharedSettings, seq: Int) -> String? {
+    /// Mac 主动发给手机的消息序号（回复手机时沿用手机的 seq）
+    private var outSeq = 0
+
+    /// 把 Mac 当前的设置发给手机（认证后才有效）。seq 为 nil 表示 Mac 主动推送。
+    public func settingsFrame(_ st: SharedSettings, seq: Int? = nil) -> String? {
         guard case let .authenticated(_, key, sid, _) = state else { return nil }
-        let inner = Inner(kind: "settings", sid: sid, seq: seq, paused: st.paused, blockSensitive: st.blockSensitive,
+        let n: Int
+        if let seq { n = seq } else { outSeq += 1; n = outSeq }
+        let inner = Inner(kind: "settings", sid: sid, seq: n, paused: st.paused, blockSensitive: st.blockSensitive,
                           copyOtp: st.copyOtp, updatedAt: st.updatedAt)
         guard let box = try? BridgeCrypto.seal(key, inner.json()) else { return nil }
         return Envelope(t: "msg", box: box).json()
     }
 
+    /// 给手机回 ack（认证后才有效）。
     public func ack(seq: Int, result: String) -> String? {
         guard case let .authenticated(_, key, sid, _) = state else { return nil }
         let inner = Inner(kind: "ack", sid: sid, seq: seq, result: result)
@@ -209,7 +214,8 @@ public final class SessionMachine {
         let name = env.deviceName ?? "未知设备"
         state = .pairing(priv: priv, phonePub: phonePub, macPub: macPub, deviceId: devId, name: name, sas: sas)
         deviceId = devId
-        let chal = Envelope(t: "pair_chal", macId: macId, macName: macName, pub: macPub.base64EncodedString())
+        let chal = Envelope(t: "pair_chal", macId: macId, macName: macName, platform: "mac",
+                            pub: macPub.base64EncodedString())
         return [.send(chal.json()), .pairingStarted(sas: sas)]
     }
 

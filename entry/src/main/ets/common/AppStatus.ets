@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { connection } from '@kit.ConnectivityKit';
 import { preferences } from '@kit.ArkData';
 import { readRecords } from './NotificationStore';
-import { loadMac, loadKey } from './PairingStore';
+import { MacInfo, pairedComputers, platformLabel } from './PairingStore';
 import { loadSettings } from './PhoneFilter';
 import {
   getGrantedBundles,
@@ -27,6 +27,7 @@ export class AppStatus {
   subscribedName: string = '';
   macName: string = '';
   macHost: string = '';
+  computerCount: number = 0;
   syncOn: boolean = true;
   todayCount: number = 0;
 
@@ -87,10 +88,14 @@ export async function loadStatus(ctx: common.Context): Promise<AppStatus> {
       s.subscribedAddr = '';
     }
   }
-  const mac = loadMac(ctx);
-  if (mac !== undefined && loadKey() !== undefined) {
-    s.macName = mac.macName;
-    s.macHost = mac.host;
+  const computers: Array<MacInfo> = pairedComputers(ctx);
+  s.computerCount = computers.length;
+  if (computers.length === 1) {
+    s.macName = computers[0].macName;
+    s.macHost = `${platformLabel(computers[0])} · ${computers[0].host}`;
+  } else if (computers.length > 1) {
+    s.macName = computers.map((m: MacInfo) => m.macName).join('、');
+    s.macHost = `${computers.length} 台电脑`;
   }
   s.syncOn = !loadSettings(ctx).paused;
   const startOfDay = new Date();
