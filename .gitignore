@@ -1,0 +1,23 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+# 发布产物与本机文件
+/dist
+/mac/build
+/mac/.build
+/mac/.swiftpm
+.DS_Store
+# 签名材料（绝不提交）
+*.p12
+*.cer
+*.csr
+*.p7b

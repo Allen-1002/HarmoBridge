@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/MacLinkPage",
+    "pages/DebugPage",
+    "pages/OnboardingPage",
+    "pages/BluetoothPage",
+    "pages/AppFilterPage"
+  ]
+}

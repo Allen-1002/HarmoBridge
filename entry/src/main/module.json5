@@ -1,0 +1,95 @@
+{
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "description": "$string:module_desc",
+    "mainElement": "EntryAbility",
+    "deviceTypes": [
+      "phone"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "pages": "$profile:main_pages",
+    "metadata": [
+      {
+        // 应用级开启 ArkUI 沉浸式系统材质（HarmonyOS 的“光感玻璃”效果，API 26）
+        "name": "ohos.arkui.UIMaterial.state",
+        "value": "enable"
+      }
+    ],
+    "requestPermissions": [
+      {
+        // 连接 Mac 的局域网 WebSocket（system_grant，普通权限）
+        "name": "ohos.permission.INTERNET"
+      },
+      {
+        // 受限权限（system_basic + system_grant），需要签名 Profile 中带有该 ACL 才能安装/生效
+        "name": "ohos.permission.SUBSCRIBE_NOTIFICATION",
+        "reason": "$string:reason_subscribe_notification",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility",
+            "NotificationSubscriberExtAbility"
+          ],
+          "when": "always"
+        }
+      },
+      {
+        // user_grant，运行时弹窗申请；用于 getPairedDevices / getPairState
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
+        "reason": "$string:reason_access_bluetooth",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      }
+    ],
+    "abilities": [
+      {
+        "name": "EntryAbility",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
+        "description": "$string:EntryAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:EntryAbility_label",
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": true,
+        "skills": [
+          {
+            "entities": [
+              "entity.system.home"
+            ],
+            "actions": [
+              "ohos.want.action.home"
+            ]
+          }
+        ]
+      }
+    ],
+    "extensionAbilities": [
+      {
+        "name": "NotificationSubscriberExtAbility",
+        "srcEntry": "./ets/extensionability/NotificationSubscriberExtAbility.ets",
+        "type": "notificationSubscriber",
+        "description": "$string:NotificationSubscriberExtAbility_desc",
+        "icon": "$media:layered_image",
+        "label": "$string:NotificationSubscriberExtAbility_label",
+        "exported": true
+      },
+      {
+        "name": "EntryBackupAbility",
+        "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
+        "type": "backup",
+        "exported": false,
+        "metadata": [
+          {
+            "name": "ohos.extension.backup",
+            "resource": "$profile:backup_config"
+          }
+        ]
+      }
+    ]
+  }
+}
