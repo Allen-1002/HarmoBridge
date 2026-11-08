@@ -22,11 +22,14 @@ interface Pending {
 
 const IDLE_CLOSE_MS = 30000;
 const MAX_PENDING = 50;
+const STALE_MS = 15000;
 
 export class ExtForwarder {
   private link: MacLink;
   private pending: Array<Pending> = [];
   private idleTimer: number = -1;
+  private lastActive: number = 0;
+  private retryCount: number = 0;
 
   constructor(ctx: common.Context) {
     this.link = new MacLink(ctx, {
@@ -34,7 +37,10 @@ export class ExtForwarder {
       onLog: (ok: boolean, msg: string) => ok ? Logger.info(`forwarder: ${msg}`) : Logger.warn(`forwarder: ${msg}`),
       onSas: () => {
       },
-      onAck: (seq: number, result: string) => Logger.info(`forwarder ack seq=${seq} result=${result}`),
+      onAck: (seq: number, result: string) => {
+        this.lastActive = Date.now();
+        Logger.info(`forwarder ack seq=${seq} result=${result}`);
+      },
     }, false);
   }
 
@@ -68,18 +74,40 @@ export class ExtForwarder {
     if (this.pending.length > MAX_PENDING) {
       this.pending.shift();
     }
-    const s = this.link.getState();
+    let s = this.link.getState();
+    const idleFor = Date.now() - this.lastActive;
+    // 扩展进程可能被系统冻结过：计时器没有按时触发，旧连接可能已失效或卡在半路。
+    // 距上次活动超过阈值时，丢弃旧连接，重新建立。
+    if (s !== 'idle' && s !== 'error' && idleFor > STALE_MS) {
+      Logger.warn(`forwarder: 连接状态 ${s} 已 ${Math.round(idleFor / 1000)} 秒无活动，重新连接`);
+      this.link.stop();
+      s = this.link.getState();
+    }
+    Logger.info(`forwarder enqueue pending=${this.pending.length} state=${s}`);
     if (s === 'online') {
       this.flush();
     } else if (s === 'idle' || s === 'error') {
+      this.lastActive = Date.now();
       this.link.connect();
     }
   }
 
   private onState(s: LinkState, detail: string): void {
     Logger.info(`forwarder state=${s} ${detail}`);
+    this.lastActive = Date.now();
     if (s === 'online') {
+      this.retryCount = 0;
       this.flush();
+    } else if (s === 'error' && this.pending.length > 0 && this.retryCount < 3) {
+      // 有待发消息时有限次重试（2s / 4s / 8s），不做无限重连
+      const delay = 2000 * Math.pow(2, this.retryCount);
+      this.retryCount++;
+      setTimeout(() => {
+        if (this.link.getState() === 'error' && this.pending.length > 0) {
+          this.lastActive = Date.now();
+          this.link.connect();
+        }
+      }, delay);
     }
   }
 
@@ -94,6 +122,7 @@ export class ExtForwarder {
         this.link.sendOtp(p.otp.id, p.otp.bundleName, p.otp.appName, p.otp.code);
       }
     }
+    this.lastActive = Date.now();
     this.armIdle();
   }
 

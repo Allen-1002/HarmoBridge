@@ -56,6 +56,8 @@ export interface LinkListener {
   onAck: (seq: number, result: string) => void;
 }
 
+const CONNECT_TIMEOUT_MS = 10000;
+
 const ERROR_TEXT: Map<string, string> = new Map<string, string>([
   ['unknown_device', 'Mac 不认识这台手机（未配对或已在 Mac 上取消配对），请重新配对'],
   ['pairing_closed', 'Mac 未开启配对或配对码已过期，请在 Mac 菜单栏点“配对新手机”'],
@@ -250,7 +252,22 @@ export class MacLink {
         return;
       }
       this.listener.onLog(false, `WebSocket 错误 ${err.code}: ${err.message}（检查 Mac 地址、端口、是否同一 Wi-Fi）`);
+      if (this.state === 'connecting' || this.state === 'authenticating') {
+        this.closeSocket();
+        this.setState('error', '连接出错');
+        this.scheduleReconnect();
+      }
     });
+    // 看门狗：扩展进程可能在连接过程中被系统冻结，事件丢失后会一直停在“连接中”。
+    // 超过 10 秒仍未完成连接/认证，就主动关闭并报错，交给调用方重连。
+    setTimeout(() => {
+      if (this.ws === ws && (this.state === 'connecting' || this.state === 'authenticating')) {
+        this.listener.onLog(false, '连接超时（10 秒未完成连接或认证）');
+        this.closeSocket();
+        this.setState('error', '连接超时');
+        this.scheduleReconnect();
+      }
+    }, CONNECT_TIMEOUT_MS);
     ws.connect(`ws://${host}:${port}`).catch((err: BusinessError) => {
       this.listener.onLog(false, `连接失败 ${err.code}: ${err.message}`);
       this.setState('error', '连接失败');
