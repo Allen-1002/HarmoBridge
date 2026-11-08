@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { connection } from '@kit.ConnectivityKit';
 import { preferences } from '@kit.ArkData';
 import { readRecords } from './NotificationStore';
-import { MacInfo, pairedComputers, platformLabel } from './PairingStore';
+import { MacInfo, matchesPlatform, pairedComputers, platformLabel } from './PairingStore';
 import { loadSettings } from './PhoneFilter';
 import {
   getGrantedBundles,
@@ -28,6 +28,8 @@ export class AppStatus {
   macName: string = '';
   macHost: string = '';
   computerCount: number = 0;
+  macNames: string = ''; // 已配对的 Mac，名称用顿号连接
+  windowsNames: string = ''; // 已配对的 Windows 电脑
   syncOn: boolean = true;
   todayCount: number = 0;
 
@@ -90,6 +92,9 @@ export async function loadStatus(ctx: common.Context): Promise<AppStatus> {
   }
   const computers: Array<MacInfo> = pairedComputers(ctx);
   s.computerCount = computers.length;
+  s.macNames = computers.filter((m: MacInfo) => matchesPlatform(m, 'mac')).map((m: MacInfo) => m.macName).join('、');
+  s.windowsNames = computers.filter((m: MacInfo) => matchesPlatform(m, 'windows')).map((m: MacInfo) => m.macName)
+    .join('、');
   if (computers.length === 1) {
     s.macName = computers[0].macName;
     s.macHost = `${platformLabel(computers[0])} · ${computers[0].host}`;

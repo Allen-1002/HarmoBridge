@@ -47,6 +47,14 @@ export function platformLabel(m: MacInfo): string {
   return m.platform === 'windows' ? 'Windows' : 'Mac';
 }
 
+/** filter 为 'mac' / 'windows' 时只保留对应平台；为空时全部保留。旧版 Mac 不发送平台，按 Mac 处理。 */
+export function matchesPlatform(m: MacInfo, filter: string): boolean {
+  if (filter.length === 0) {
+    return true;
+  }
+  return filter === 'windows' ? m.platform === 'windows' : m.platform !== 'windows';
+}
+
 // ---------- 密钥 ----------
 
 function aliasFor(macId: string): string {

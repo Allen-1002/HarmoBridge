@@ -2,7 +2,8 @@ import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
 import { displayName, FoundMac, MacDiscovery } from '../common/MacDiscovery';
 import { LinkState, MacLink } from '../common/MacLink';
-import { forgetComputer, MacInfo, pairedComputers, platformLabel, updateComputerAddress } from '../common/PairingStore';
+import { forgetComputer, MacInfo, matchesPlatform, pairedComputers, platformLabel, updateComputerAddress }
+  from '../common/PairingStore';
 import { Card, Chip, IconBadge, PrimaryButton, SectionTitle, Tone } from './UI';
 
 /**
@@ -174,6 +175,8 @@ export struct MacPanel {
   @State found: Array<FoundMac> = [];
   @State searching: boolean = false;
   @State manual: boolean = false;
+  // 'mac' / 'windows'：只显示和配对该平台的电脑（设置里的“Mac 连接”“Windows 连接”）；为空时显示全部（引导页）
+  platform: string = '';
   onPaired: () => void = () => {
   };
   private link: MacLink | undefined = undefined;
@@ -205,9 +208,16 @@ export struct MacPanel {
         if (s !== 'awaitingSasConfirm') {
           this.sasCode = '';
         }
-        if (wasPairing && s === 'idle' && this.link?.pairedMac() !== undefined) {
+        const newMac = this.link?.pairedMac();
+        if (wasPairing && s === 'idle' && newMac !== undefined) {
           this.pin = '';
           this.adding = false;
+          if (!matchesPlatform(newMac, this.platform)) {
+            promptAction.showToast({
+              message: `${newMac.macName} 是 ${platformLabel(newMac)} 电脑，已放到“${platformLabel(newMac)} 连接”里`,
+              duration: 3000,
+            });
+          }
           this.reload();
           this.onPaired();
           this.link = this.newPairingLink();
@@ -232,7 +242,29 @@ export struct MacPanel {
   }
 
   private reload(): void {
-    this.computers = pairedComputers(this.ctx());
+    this.computers = pairedComputers(this.ctx()).filter((m: MacInfo) => matchesPlatform(m, this.platform));
+  }
+
+  private platformName(): string {
+    return this.platform === 'windows' ? 'Windows 电脑' : this.platform === 'mac' ? 'Mac' : '电脑';
+  }
+
+  /** 发现到的服务平台未知（TXT 读不到）时两个页面都显示。 */
+  private foundMatches(m: FoundMac): boolean {
+    if (this.platform.length === 0 || m.platform.length === 0) {
+      return true;
+    }
+    return m.platform === this.platform;
+  }
+
+  private pairingHint(): string {
+    if (this.platform === 'windows') {
+      return '在 Windows 电脑上打开 HarmoBridge，右键任务栏托盘图标 →“配对新手机”（或主窗口“设备与配对”→“生成配对码”），屏幕上会出现 6 位配对码。';
+    }
+    if (this.platform === 'mac') {
+      return '在 Mac 菜单栏点 HarmoBridge 图标 →“配对新手机”，屏幕上会出现 6 位配对码。';
+    }
+    return 'Mac：点菜单栏 HarmoBridge 图标 →“配对新手机”。Windows：右键任务栏托盘图标 →“配对新手机”。屏幕上会出现 6 位配对码。';
   }
 
   private isPaired(m: FoundMac): boolean {
@@ -240,13 +272,15 @@ export struct MacPanel {
   }
 
   private matchPaired(m: FoundMac): MacInfo | undefined {
+    // 地址更新对所有已配对电脑生效，不只当前页面的平台
+    const all: Array<MacInfo> = pairedComputers(this.ctx());
     if (m.id.length > 0) {
-      const byId = this.computers.find((c: MacInfo) => c.macId === m.id);
+      const byId = all.find((c: MacInfo) => c.macId === m.id);
       if (byId !== undefined) {
         return byId;
       }
     }
-    return this.computers.find((c: MacInfo) => c.macName === displayName(m.name));
+    return all.find((c: MacInfo) => c.macName === displayName(m.name));
   }
 
   private search(): void {
@@ -256,6 +290,9 @@ export struct MacPanel {
       const paired = this.matchPaired(m);
       if (paired !== undefined && updateComputerAddress(this.ctx(), paired.macId, m.host, m.port)) {
         this.reload();
+      }
+      if (!this.foundMatches(m)) {
+        return;
       }
       if (this.found.find((f: FoundMac) => f.host === m.host && f.port === m.port) === undefined) {
         this.found = this.found.concat([m]);
@@ -292,13 +329,13 @@ export struct MacPanel {
       })
     }, (m: MacInfo) => `${m.macId}|${m.host}|${m.port}`)
 
-    Text('通知会同时转发给每台已配对的电脑，由系统在后台按需连接，不需要保持这个页面打开。上面的按钮只用来测试连接。')
+    Text('通知会同时转发给每台已配对的电脑（Mac 和 Windows 都算），由系统在后台按需连接，不需要保持这个页面打开。上面的按钮只用来测试连接。')
       .fontSize(12)
       .fontColor($r('app.color.hb_text2'))
       .margin({ bottom: 12 })
 
     if (!this.adding) {
-      Button('添加电脑')
+      Button(`添加${this.platformName()}`)
         .width('100%')
         .height(44)
         .fontColor($r('app.color.hb_accent'))
@@ -312,7 +349,7 @@ export struct MacPanel {
 
   @Builder
   PairingView() {
-    SectionTitle({ title: '1. 选择电脑' })
+    SectionTitle({ title: `1. 选择${this.platformName()}` })
     Card() {
       Column() {
         if (this.found.length === 0 && !this.manual) {
@@ -320,8 +357,10 @@ export struct MacPanel {
             if (this.searching) {
               LoadingProgress().width(22).height(22).color($r('app.color.hb_accent'))
             }
-            Text(this.searching ? '正在局域网中查找电脑…' :
-              '没有找到。确认电脑上 HarmoBridge 已运行、和手机在同一 Wi-Fi；Windows 需允许防火墙“专用网络”')
+            Text(this.searching ? `正在局域网中查找${this.platformName()}…` :
+              (this.platform === 'windows' ?
+                '没有找到。确认 Windows 上 HarmoBridge 已运行、和手机在同一 Wi-Fi，并在防火墙中允许“专用网络”；也可以手动输入电脑 IP' :
+                `没有找到。确认${this.platformName()}上 HarmoBridge 已运行、和手机在同一 Wi-Fi`))
               .fontSize(13)
               .fontColor($r('app.color.hb_text2'))
               .margin({ left: this.searching ? 10 : 0 })
@@ -353,7 +392,7 @@ export struct MacPanel {
 
         if (this.manual) {
           Row({ space: 8 }) {
-            TextInput({ placeholder: '电脑 IP 地址', text: $$this.host }).layoutWeight(3)
+            TextInput({ placeholder: `${this.platformName()} IP 地址`, text: $$this.host }).layoutWeight(3)
             TextInput({ placeholder: '端口', text: $$this.port }).layoutWeight(1).type(InputType.Number)
           }
           .padding(12)
@@ -376,10 +415,10 @@ export struct MacPanel {
       }
     }
 
-    SectionTitle({ title: '2. 输入电脑上显示的配对码' })
+    SectionTitle({ title: `2. 输入${this.platformName()}上显示的配对码` })
     Card() {
       Column({ space: 12 }) {
-        Text('Mac：点菜单栏 HarmoBridge 图标 →“配对新手机”。Windows：右键任务栏托盘图标 →“配对新手机”。屏幕上会出现 6 位配对码。')
+        Text(this.pairingHint())
           .fontSize(13)
           .fontColor($r('app.color.hb_text2'))
         TextInput({ placeholder: '6 位配对码', text: $$this.pin })

@@ -42,6 +42,10 @@ function appLabel(r: EventRecord): string {
   return r.bundleName === undefined ? '' : r.bundleName;
 }
 
+interface LinkParams {
+  platform: string;
+}
+
 @Entry
 @Component
 struct Index {
@@ -114,6 +118,10 @@ struct Index {
     } catch (e) {
       promptAction.showToast({ message: describeError(e), duration: 3000 });
     }
+  }
+
+  private goLink(platform: string): void {
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/MacLinkPage', params: { platform: platform } as LinkParams });
   }
 
   private go(url: string): void {
@@ -433,10 +441,16 @@ struct Index {
             })
             NavRow({
               symbol: $r('sys.symbol.desktop'),
-              title: '电脑连接',
-              subtitle: this.status.macReady ? (this.status.computerCount > 1 ? this.status.macHost : this.status.macName) : '未配对',
+              title: 'Mac 连接',
+              subtitle: this.status.macNames.length > 0 ? this.status.macNames : '未配对',
+              onTap: () => this.goLink('mac'),
+            })
+            NavRow({
+              symbol: $r('sys.symbol.desktop'),
+              title: 'Windows 连接',
+              subtitle: this.status.windowsNames.length > 0 ? this.status.windowsNames : '未配对',
               showDivider: false,
-              onTap: () => this.go('pages/MacLinkPage'),
+              onTap: () => this.goLink('windows'),
             })
           }
         }
