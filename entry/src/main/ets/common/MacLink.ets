@@ -5,6 +5,7 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { b64, derivePairKey, fromB64, generateX25519, open, randomBytes, sas, seal, X25519Pair } from './Crypto';
 import { Logger, maskText } from './Logger';
 import { deviceId, loadKey, loadMac, MacInfo, saveKey, saveMac } from './PairingStore';
+import { loadSettings, SyncSettings, writeSettings } from './PhoneFilter';
 
 /** 外层帧，字段见 docs/protocol.md */
 interface Envelope {
@@ -33,6 +34,11 @@ interface Inner {
   ids?: Array<string>;
   result?: string;
   code?: string;
+  // kind = 'settings'：两端共有的同步开关
+  paused?: boolean;
+  blockSensitive?: boolean;
+  copyOtp?: boolean;
+  updatedAt?: number;
 }
 
 /** 发往 Mac 的一条通知（字段来自真实 NotificationInfo，或用户手动发出的测试消息）。 */
@@ -54,6 +60,8 @@ export interface LinkListener {
   onLog: (ok: boolean, msg: string) => void;
   onSas: (sas: string) => void;
   onAck: (seq: number, result: string) => void;
+  /** Mac 同步过来的设置已写入本机（可选，界面用来刷新开关） */
+  onSettingsChanged?: () => void;
 }
 
 const CONNECT_TIMEOUT_MS = 10000;
@@ -363,8 +371,46 @@ export class MacLink {
     }
     this.seq = 0;
     this.setState('online', '已认证，在线');
+    // 每次连上都交换一次设置，双方按修改时间“后改的为准”
+    this.sendSettings();
     if (this.foreground) {
       this.startPing();
+    }
+  }
+
+  /** 把本机的同步开关发给 Mac。 */
+  sendSettings(): void {
+    if (this.state !== 'online') {
+      return;
+    }
+    const st: SyncSettings = loadSettings(this.ctx);
+    this.sendInner({
+      kind: 'settings',
+      sid: this.sid,
+      seq: ++this.seq,
+      paused: st.paused,
+      blockSensitive: st.blockSensitive,
+      copyOtp: st.copyOtp,
+      updatedAt: st.updatedAt,
+    });
+  }
+
+  private applyRemoteSettings(inner: Inner): void {
+    if (inner.updatedAt === undefined) {
+      return;
+    }
+    const st: SyncSettings = loadSettings(this.ctx);
+    if (inner.updatedAt <= st.updatedAt) {
+      return;
+    }
+    st.paused = inner.paused === undefined ? st.paused : inner.paused;
+    st.blockSensitive = inner.blockSensitive === undefined ? st.blockSensitive : inner.blockSensitive;
+    st.copyOtp = inner.copyOtp === undefined ? st.copyOtp : inner.copyOtp;
+    st.updatedAt = inner.updatedAt;
+    writeSettings(this.ctx, st);
+    Logger.info(`settings synced from Mac paused=${st.paused} blockSensitive=${st.blockSensitive} copyOtp=${st.copyOtp}`);
+    if (this.listener.onSettingsChanged !== undefined) {
+      this.listener.onSettingsChanged();
     }
   }
 
@@ -379,6 +425,8 @@ export class MacLink {
     }
     if (inner.kind === 'ack') {
       this.listener.onAck(inner.seq, inner.result === undefined ? '' : inner.result);
+    } else if (inner.kind === 'settings') {
+      this.applyRemoteSettings(inner);
     }
   }
 

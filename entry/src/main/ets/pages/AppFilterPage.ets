@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { EventRecord, readRecords } from '../common/NotificationStore';
-import { loadSettings, saveSettings, SyncSettings } from '../common/PhoneFilter';
+import { loadSettings, SyncSettings, writeSettings } from '../common/PhoneFilter';
 import { getGrantedBundles } from '../common/SubscriptionService';
 import { Card, PageHeader, SwitchRow, auroraBackground } from '../components/UI';
 
@@ -51,7 +51,7 @@ struct AppFilterPage {
       set.push(bundle);
     }
     s.blockedBundles = set;
-    saveSettings(this.ctx(), s);
+    writeSettings(this.ctx(), s); // 应用屏蔽列表不参与与 Mac 的开关同步，不刷新修改时间
     this.blocked = set;
   }
 

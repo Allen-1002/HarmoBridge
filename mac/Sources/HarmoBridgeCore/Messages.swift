@@ -52,10 +52,16 @@ public struct Inner: Codable, Equatable {
     public var ids: [String]?
     public var result: String?
     public var code: String?
+    // kind = "settings"：两端共有的同步开关
+    public var paused: Bool?
+    public var blockSensitive: Bool?
+    public var copyOtp: Bool?
+    public var updatedAt: Double?
 
     public init(kind: String, sid: String, seq: Int, id: String? = nil, bundleName: String? = nil,
                 appName: String? = nil, title: String? = nil, text: String? = nil, time: Double? = nil,
-                test: Bool? = nil, ids: [String]? = nil, result: String? = nil, code: String? = nil) {
+                test: Bool? = nil, ids: [String]? = nil, result: String? = nil, code: String? = nil,
+                paused: Bool? = nil, blockSensitive: Bool? = nil, copyOtp: Bool? = nil, updatedAt: Double? = nil) {
         self.kind = kind
         self.sid = sid
         self.seq = seq
@@ -69,6 +75,10 @@ public struct Inner: Codable, Equatable {
         self.ids = ids
         self.result = result
         self.code = code
+        self.paused = paused
+        self.blockSensitive = blockSensitive
+        self.copyOtp = copyOtp
+        self.updatedAt = updatedAt
     }
 
     public func json() -> String {
@@ -115,5 +125,25 @@ public struct OtpCode: Equatable {
         self.bundleName = bundleName
         self.appName = appName
         self.code = code
+    }
+}
+
+/// 两端共有的同步开关。updatedAt 为毫秒时间戳，同步时“后改的为准”。
+public struct SharedSettings: Equatable {
+    public var paused: Bool
+    public var blockSensitive: Bool
+    public var copyOtp: Bool
+    public var updatedAt: Double
+
+    public init(paused: Bool, blockSensitive: Bool, copyOtp: Bool, updatedAt: Double) {
+        self.paused = paused
+        self.blockSensitive = blockSensitive
+        self.copyOtp = copyOtp
+        self.updatedAt = updatedAt
+    }
+
+    /// 合并对方的设置：对方更新时返回对方的值，否则保留本机的值。
+    public func merged(with remote: SharedSettings) -> SharedSettings {
+        remote.updatedAt > updatedAt ? remote : self
     }
 }

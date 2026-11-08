@@ -5,6 +5,7 @@ import { describeError } from '../common/ErrorDescriber';
 import { clearRecords, EventRecord, readRecords } from '../common/NotificationStore';
 import { loadSettings, saveSettings, SyncSettings } from '../common/PhoneFilter';
 import { openGrantSettings } from '../common/SubscriptionService';
+import { SettingsSync } from '../common/SettingsSync';
 import { AuroraBackground, Card, Chip, GLASS, GLASS_THIN, NavRow, SectionTitle, StatTile, SwitchRow } from '../components/UI';
 
 const AVATAR_COLORS: Array<string> = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#EC4899'];
@@ -46,7 +47,9 @@ function appLabel(r: EventRecord): string {
 struct Index {
   @State tab: number = 0;
   @State status: AppStatus = new AppStatus();
-  @State settings: SyncSettings = { paused: false, blockSensitive: true, blockedBundles: [], copyOtp: true };
+  @State settings: SyncSettings = {
+    paused: false, blockSensitive: true, blockedBundles: [], copyOtp: true, updatedAt: 0
+  };
   @State records: Array<EventRecord> = [];
   @State cancelled: Array<string> = [];
   @State showContent: boolean = false;
@@ -68,6 +71,13 @@ struct Index {
     if (this.loaded) {
       this.reload();
     }
+    // 拉取 Mac 上改过的开关
+    SettingsSync.run(this.ctx(), (changed: boolean) => {
+      if (changed) {
+        this.settings = loadSettings(this.ctx());
+        this.status.syncOn = !this.settings.paused;
+      }
+    });
   }
 
   private async reload(): Promise<void> {
@@ -94,6 +104,7 @@ struct Index {
     saveSettings(this.ctx(), s);
     this.settings = s;
     this.status.syncOn = !s.paused;
+    SettingsSync.run(this.ctx()); // 推送到 Mac
   }
 
   private async openGrant(): Promise<void> {

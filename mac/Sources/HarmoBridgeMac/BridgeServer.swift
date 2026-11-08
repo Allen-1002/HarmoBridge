@@ -68,6 +68,11 @@ final class BridgeServer {
         sendRaw(text, on: s.conn)
     }
 
+    func sendSettings(_ st: SharedSettings, seq: Int, to id: ObjectIdentifier) {
+        guard let s = sessions[id], let frame = s.machine.settingsFrame(st, seq: seq) else { return }
+        sendRaw(frame, on: s.conn)
+    }
+
     func ack(seq: Int, result: String, to id: ObjectIdentifier) {
         guard let s = sessions[id], let frame = s.machine.ack(seq: seq, result: result) else { return }
         sendRaw(frame, on: s.conn)

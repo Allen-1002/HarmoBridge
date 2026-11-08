@@ -28,10 +28,16 @@ final class AppModel: ObservableObject {
     @Published var pairingPin: String?
     @Published var pairingSas: String?
     @Published var paused = false {
-        didSet { UserDefaults.standard.set(paused, forKey: "paused") }
+        didSet {
+            UserDefaults.standard.set(paused, forKey: "paused")
+            if oldValue != paused { touchSettings() }
+        }
     }
     @Published var filter: SyncFilter {
-        didSet { saveFilter() }
+        didSet {
+            saveFilter()
+            if oldValue.blockSensitive != filter.blockSensitive { touchSettings() }
+        }
     }
     @Published var records: [ReceivedRecord] = []
     @Published var logs: [LogLine] = []
@@ -333,6 +339,9 @@ final class AppModel: ObservableObject {
             touch(conn)
             let result = present(n)
             server.ack(seq: seq, result: result, to: conn)
+        case let .settings(st, seq):
+            touch(conn)
+            handleRemoteSettings(st, seq: seq, conn: conn)
         case let .otp(o, seq):
             touch(conn)
             server.ack(seq: seq, result: handleOtp(o), to: conn)
@@ -367,7 +376,45 @@ final class AppModel: ObservableObject {
     }
 
     @Published var copyOtp: Bool = UserDefaults.standard.object(forKey: "copyOtp") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(copyOtp, forKey: "copyOtp") }
+        didSet {
+            UserDefaults.standard.set(copyOtp, forKey: "copyOtp")
+            if oldValue != copyOtp { touchSettings() }
+        }
+    }
+
+    // MARK: - 与手机同步的开关（暂停同步、敏感通知过滤、验证码复制）
+
+    /// 正在应用手机同步过来的设置时为 true，避免把修改时间刷新成现在。
+    private var applyingRemote = false
+
+    private var settingsUpdatedAt: Double {
+        get { UserDefaults.standard.double(forKey: "settingsUpdatedAt") }
+        set { UserDefaults.standard.set(newValue, forKey: "settingsUpdatedAt") }
+    }
+
+    private func touchSettings() {
+        guard !applyingRemote else { return }
+        settingsUpdatedAt = Date().timeIntervalSince1970 * 1000
+    }
+
+    var sharedSettings: SharedSettings {
+        SharedSettings(paused: paused, blockSensitive: filter.blockSensitive, copyOtp: copyOtp,
+                       updatedAt: settingsUpdatedAt)
+    }
+
+    /// 收到手机的设置：对方更新就采用对方的，然后把合并结果回传给手机。
+    private func handleRemoteSettings(_ remote: SharedSettings, seq: Int, conn: ObjectIdentifier) {
+        let merged = sharedSettings.merged(with: remote)
+        if merged == remote && remote != sharedSettings {
+            applyingRemote = true
+            paused = remote.paused
+            filter.blockSensitive = remote.blockSensitive
+            copyOtp = remote.copyOtp
+            settingsUpdatedAt = remote.updatedAt
+            applyingRemote = false
+            log("已同步手机的设置：同步\(remote.paused ? "暂停" : "开启")、敏感过滤\(remote.blockSensitive ? "开" : "关")、验证码复制\(remote.copyOtp ? "开" : "关")")
+        }
+        server.sendSettings(merged, seq: seq, to: conn)
     }
     @Published var lastOtp: (code: String, app: String, at: Date)?
 

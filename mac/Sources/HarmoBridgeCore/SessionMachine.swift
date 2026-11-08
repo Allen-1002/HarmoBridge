@@ -55,6 +55,7 @@ public final class SessionMachine {
         case notify(MirroredNotification, seq: Int)
         case cancel([String], seq: Int)
         case otp(OtpCode, seq: Int)
+        case settings(SharedSettings, seq: Int)
         case ping(seq: Int)
         case log(String)
     }
@@ -143,6 +144,15 @@ public final class SessionMachine {
     }
 
     /// 给手机回 ack（认证后才有效）。
+    /// 把 Mac 当前的设置发给手机（认证后才有效）。
+    public func settingsFrame(_ st: SharedSettings, seq: Int) -> String? {
+        guard case let .authenticated(_, key, sid, _) = state else { return nil }
+        let inner = Inner(kind: "settings", sid: sid, seq: seq, paused: st.paused, blockSensitive: st.blockSensitive,
+                          copyOtp: st.copyOtp, updatedAt: st.updatedAt)
+        guard let box = try? BridgeCrypto.seal(key, inner.json()) else { return nil }
+        return Envelope(t: "msg", box: box).json()
+    }
+
     public func ack(seq: Int, result: String) -> String? {
         guard case let .authenticated(_, key, sid, _) = state else { return nil }
         let inner = Inner(kind: "ack", sid: sid, seq: seq, result: result)
@@ -166,6 +176,10 @@ public final class SessionMachine {
             return [.notify(n, seq: inner.seq)]
         case "cancel":
             return [.cancel(inner.ids ?? [], seq: inner.seq)]
+        case "settings":
+            guard let ts = inner.updatedAt else { return [.log("设置消息缺少修改时间，已忽略")] }
+            return [.settings(SharedSettings(paused: inner.paused ?? false, blockSensitive: inner.blockSensitive ?? true,
+                                             copyOtp: inner.copyOtp ?? true, updatedAt: ts), seq: inner.seq)]
         case "otp":
             guard let code = inner.code, (4...8).contains(code.count), code.allSatisfy(\.isNumber) else {
                 return [.log("验证码消息格式不对，已忽略")]

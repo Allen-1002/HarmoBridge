@@ -66,6 +66,15 @@ final class SessionMachineTests: XCTestCase {
         XCTAssertEqual(o.code, "123456")
         XCTAssertEqual(seq2, 2)
 
+        let stMsg = Inner(kind: "settings", sid: macNonce, seq: 3, paused: true, blockSensitive: false, copyOtp: true,
+                          updatedAt: 2000)
+        let r3 = m.handle(Envelope(t: "msg", box: try BridgeCrypto.seal(key, stMsg.json())).json())
+        guard case let .settings(st, seq3) = r3.first else { return XCTFail("expected settings, got \(r3)") }
+        XCTAssertEqual(st, SharedSettings(paused: true, blockSensitive: false, copyOtp: true, updatedAt: 2000))
+        XCTAssertEqual(seq3, 3)
+        let back = Envelope.parse(m.settingsFrame(st, seq: 3)!)!
+        XCTAssertEqual(Inner.parse(try BridgeCrypto.open(key, back.box!))?.paused, true)
+
         // 重放同一帧必须被拒绝并断开
         let replay = m.handle(frame)
         XCTAssertTrue(replay.contains(.close("replay")))
@@ -96,6 +105,14 @@ final class SessionMachineTests: XCTestCase {
         let m = SessionMachine(store: MemoryStore(), window: PairingWindow(), macId: "mac", macName: "Mac")
         let pub = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation.base64EncodedString()
         XCTAssertEqual(sent(m.handle(Envelope(t: "pair_req", deviceId: "d", pub: pub).json()))?.code, "pairing_closed")
+    }
+
+    func testSettingsMergeLaterWins() {
+        let local = SharedSettings(paused: false, blockSensitive: true, copyOtp: true, updatedAt: 100)
+        let newer = SharedSettings(paused: true, blockSensitive: false, copyOtp: false, updatedAt: 200)
+        let older = SharedSettings(paused: true, blockSensitive: false, copyOtp: false, updatedAt: 50)
+        XCTAssertEqual(local.merged(with: newer), newer)
+        XCTAssertEqual(local.merged(with: older), local)
     }
 
     func testFilterAndDedup() {

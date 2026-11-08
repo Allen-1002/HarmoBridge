@@ -571,10 +571,15 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("同步") {
+            Section {
                 Toggle("同步通知", isOn: Binding(get: { !model.paused }, set: { model.paused = !$0 }))
                 Toggle("验证码自动复制到剪贴板", isOn: $model.copyOtp)
+                Toggle("不转发银行、支付类通知", isOn: $model.filter.blockSensitive)
                 Toggle("在列表中显示通知内容", isOn: $model.showContentInList)
+            } header: {
+                Text("同步")
+            } footer: {
+                Text("前三项与手机自动保持一致：在任意一端修改，另一端会在下次连接时同步（手机打开 HarmoBridge 或来新通知时）。")
             }
             Section("系统") {
                 Toggle("登录时自动启动", isOn: Binding(get: { model.loginItemEnabled }, set: { model.setLoginItem($0) }))
@@ -603,9 +608,9 @@ struct FilterTab: View {
                     Text("全部转发（黑名单除外）").tag(SyncFilter.Mode.allExceptBlacklist)
                     Text("仅白名单").tag(SyncFilter.Mode.whitelistOnly)
                 }
-                Toggle("拦截验证码、银行、支付等敏感通知全文", isOn: $model.filter.blockSensitive)
+                Toggle("不转发银行、支付类通知", isOn: $model.filter.blockSensitive)
             } footer: {
-                Text("验证码会单独以“只发验证码”的方式复制到剪贴板，不受这里影响。")
+                Text("验证码会单独以“只发验证码”的方式复制到剪贴板，不受这里影响。暂停同步、验证码复制和这一项会与手机自动保持一致。")
             }
             Section("添加应用") {
                 HStack {
