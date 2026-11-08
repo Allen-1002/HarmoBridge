@@ -16,14 +16,18 @@
 
 ## 工作原理
 
-```
-鸿蒙手机                                                Mac
-┌────────────────────────────────┐   局域网 WebSocket    ┌───────────────────────────┐
-│ NotificationSubscriber 扩展    │ ───(X25519 + AES-GCM)──▶ │ 菜单栏应用                │
-│  · 系统按需拉起，收到通知      │     Bonjour 自动发现    │  · 认证、解密、去重、过滤 │
-│  · 过滤 / 提取验证码 / 转发    │                         │  · macOS 通知中心 / 剪贴板│
-└────────────────────────────────┘                         └───────────────────────────┘
-        ▲ 系统要求：订阅时绑定一台已配对的蓝牙设备（可以就是这台 Mac）
+```mermaid
+flowchart LR
+    subgraph Phone["鸿蒙手机"]
+        A["其他应用发布通知"] --> B["NotificationSubscriber 扩展<br/>系统按需拉起"]
+        B --> C["过滤 / 提取验证码"]
+    end
+    subgraph Mac["Mac 菜单栏应用"]
+        D["认证、解密<br/>去重、过滤"] --> E["macOS 通知中心"]
+        D --> F["剪贴板（验证码）"]
+    end
+    C -- "局域网 WebSocket<br/>X25519 + AES-256-GCM<br/>Bonjour 自动发现" --> D
+    Phone -. "系统要求：订阅时绑定一台<br/>已配对的蓝牙设备（可以就是这台 Mac）" .- Mac
 ```
 
 鸿蒙读取第三方通知的**唯一官方方式**是“通知订阅扩展能力”（`notificationExtensionSubscription` + `NotificationSubscriberExtensionAbility`）。它有两个硬性前提：
