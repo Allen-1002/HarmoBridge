@@ -42,6 +42,11 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
         }
+        debug {
+            // 调试版也用发布签名：从 Android Studio 直接装到手机上的版本，之后才能被 GitHub 上的新版直接覆盖更新。
+            // （Android 不允许用不同签名的安装包覆盖已安装的应用）没有 keystore.properties 时退回默认调试签名。
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+        }
     }
 
     buildFeatures {

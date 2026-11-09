@@ -131,7 +131,7 @@ object Updater {
         }
         if (!sameSigner(ctx, f)) {
             f.delete()
-            throw Exception("安装包签名与当前 App 不一致，已停止更新")
+            throw Exception("手机上装的 NotiBridge 不是用发布签名打包的（例如从 Android Studio 直接安装的调试版），Android 不允许直接覆盖更新。请卸载后从 GitHub 安装一次新版，之后就能自动更新了")
         }
         NotiApp.instance.store.log(true, "新版本 ${info.latest} 已下载并校验")
         return f
