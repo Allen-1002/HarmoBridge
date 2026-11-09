@@ -170,7 +170,7 @@ public partial class MainWindow : Window
     private void OnOpenNetwork(object sender, RoutedEventArgs e) => AppModel.OpenNetworkSettings();
     private void OnHomepage(object sender, RoutedEventArgs e) => AppModel.OpenUri("https://github.com/Allen-1002/NotiBridge");
     private async void OnCheckUpdate(object sender, RoutedEventArgs e) => await _model.Updater.CheckAsync(manual: true);
-    private async void OnInstallUpdate(object sender, RoutedEventArgs e) => await _model.Updater.InstallAvailableAsync();
+    private async void OnInstallUpdate(object sender, RoutedEventArgs e) => await _model.Updater.PrimaryActionAsync();
 
     private void OnOpenReleasePage(object sender, RoutedEventArgs e)
     {

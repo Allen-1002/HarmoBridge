@@ -39,6 +39,18 @@ extension View {
     func hbPageBackground() -> some View {
         self.scrollContentBackground(.hidden)
             .background(AmbientBackground())
+            .hbTitlebarEdge()
+    }
+
+    /// 内容滚到标题栏下面时，标题栏后面加一层不透明的材质，避免页面标题和内容文字重叠
+    @ViewBuilder
+    func hbTitlebarEdge() -> some View {
+        if #available(macOS 26.0, *) {
+            self.scrollEdgeEffectStyle(.hard, for: .top)
+                .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+        } else {
+            self.toolbarBackground(.visible, for: .windowToolbar)
+        }
     }
 }
 
@@ -313,7 +325,7 @@ struct StatusMenu: View {
     @ViewBuilder
     private var updateBadge: some View {
         let u = model.updater
-        if let r = u.available, !u.autoInstall || u.phase == .failed || u.isBusy {
+        if let r = u.available {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.down.circle.fill").foregroundStyle(.green)
                     .frame(width: 30, height: 30)
@@ -324,7 +336,8 @@ struct StatusMenu: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Button("立即更新") { u.installAvailable() }.controlSize(.small).hbGlassButton()
+                Button(u.phase == .ready ? "重启并安装" : "下载并安装") { u.installAvailable() }
+                    .controlSize(.small).hbGlassButton()
                     .disabled(u.isBusy)
             }
             .padding(12)
@@ -857,6 +870,8 @@ struct UpdateSection: View {
                     .textSelection(.enabled)
                 if let p = updater.progress {
                     ProgressView(value: p)
+                    Text("\(Int(p * 100))%  \(updater.progressText)")
+                        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 }
             }
             if !updater.notes.isEmpty, updater.available != nil {
@@ -866,15 +881,20 @@ struct UpdateSection: View {
                 Button("检查更新") { updater.check(manual: true) }
                     .disabled(updater.isBusy)
                 if let r = updater.available {
-                    Button("立即更新到 \(r.version)") { updater.installAvailable() }
-                        .disabled(updater.isBusy)
+                    if updater.phase == .ready {
+                        Button("重启并安装 \(r.version)") { updater.restartAndInstall() }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("下载 \(r.version)") { updater.downloadAvailable() }
+                            .disabled(updater.isBusy)
+                    }
                     Button("查看发布页") { NSWorkspace.shared.open(r.htmlURL) }
                 }
             }
         } header: {
             Text("软件更新")
         } footer: {
-            Text("从 GitHub Releases 下载新版，校验 SHA256 和签名后自动替换并重新打开。启动 30 秒后检查一次，之后每 6 小时检查一次；正在配对手机时不会更新。")
+            Text("点“检查更新”只检查，不会下载；发现新版后可以先下载，下载并校验 SHA256 和签名后再选择重启安装。打开“自动下载并安装”时，后台检查（启动 30 秒后一次，之后每 6 小时一次）发现新版会自动下载并重启安装；正在配对手机时不会安装。")
         }
     }
 }

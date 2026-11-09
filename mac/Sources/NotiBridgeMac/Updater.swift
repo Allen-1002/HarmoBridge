@@ -18,6 +18,8 @@ final class Updater: ObservableObject {
         case checking
         case downloading
         case verifying
+        /// 已下载并校验通过，等用户点“重启并安装”
+        case ready
         case installing
         case failed
     }
@@ -39,6 +41,9 @@ final class Updater: ObservableObject {
     @Published private(set) var available: UpdateCore.Release?
     @Published private(set) var notes = ""
     @Published private(set) var lastChecked: Date?
+    /// 已下载并校验通过的新版本
+    @Published private(set) var readyVersion: String?
+    private var staged: (app: URL, dmg: URL, version: String)?
 
     let currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
 
@@ -58,6 +63,9 @@ final class Updater: ObservableObject {
     }()
 
     var isBusy: Bool { [.checking, .downloading, .verifying, .installing].contains(phase) }
+
+    /// 已下载的字节数 / 总字节数（下载时显示）
+    @Published private(set) var progressText = ""
 
     // MARK: - 启动
 
@@ -131,11 +139,17 @@ final class Updater: ObservableObject {
             }
             available = release
             log("发现新版本 \(release.version)")
-            if autoInstall {
-                await performInstall(release)
+            if let staged, staged.version == release.version {
+                // 已经下载好了，等用户重启安装
+                phase = .ready
+                status = "\(release.version) 已下载，重启即可安装"
+            } else if autoInstall && !manual {
+                // 后台自动更新：下载、校验后直接安装并重新打开
+                if await performDownload(release) { applyStaged() }
             } else {
+                // 手动检查只检查，由用户决定是否下载
                 phase = .idle
-                status = "有新版本 \(release.version)"
+                status = "有新版本 \(release.version)，可以下载"
             }
         } catch {
             fail("检查更新失败：\(error.localizedDescription)")
@@ -144,23 +158,59 @@ final class Updater: ObservableObject {
 
     // MARK: - 下载、校验、安装
 
-    /// 用户点“立即更新”
-    func installAvailable() {
+    /// 用户点“下载新版本”：只下载和校验，不重启
+    func downloadAvailable() {
         guard !isBusy, let r = available else { return }
-        Task { await performInstall(r) }
+        Task { _ = await performDownload(r) }
     }
 
-    private func performInstall(_ release: UpdateCore.Release) async {
+    /// 菜单栏弹窗里的“立即更新”：没下载就先下载，下载好后重启安装
+    func installAvailable() {
+        if staged != nil { restartAndInstall(); return }
+        guard !isBusy, let r = available else { return }
+        Task { if await performDownload(r) { restartAndInstall() } }
+    }
+
+    /// 用户点“重启并安装”
+    func restartAndInstall() {
+        guard !isBusy || phase == .ready else { return }
         guard canUpdateNow() else {
+            status = "正在配对手机，配对结束后再安装"
+            log("正在配对手机，暂不重启安装")
+            return
+        }
+        applyStaged()
+    }
+
+    private func applyStaged() {
+        guard let st = staged else { return }
+        guard FileManager.default.fileExists(atPath: st.app.path) else {
+            // 临时目录被系统清理了：需要重新下载
+            staged = nil
+            readyVersion = nil
             phase = .idle
-            status = "正在配对手机，配对结束后再更新"
-            log("正在配对手机，1 分钟后再尝试更新")
+            status = "下载的新版已被清理，请重新下载"
+            return
+        }
+        guard canUpdateNow() else {
+            phase = .ready
+            status = "\(st.version) 已下载，配对结束后会自动安装"
+            log("正在配对手机，1 分钟后再尝试安装")
             retryTimer?.invalidate()
             retryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
-                MainActor.assumeIsolated { self?.installAvailable() }
+                MainActor.assumeIsolated { self?.applyStaged() }
             }
             return
         }
+        do {
+            try install(stagedApp: st.app, dmg: st.dmg, version: st.version)
+        } catch {
+            fail("安装失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 下载、校验，并把新版 .app 复制到临时目录。成功返回 true（phase = .ready）。
+    private func performDownload(_ release: UpdateCore.Release) async -> Bool {
         let version = release.version
         let dmgName = UpdateCore.macAssetName(version: version)
         do {
@@ -201,13 +251,13 @@ final class Updater: ObservableObject {
 
             // 4. 挂载并复制出 .app
             let mount = work.appendingPathComponent("mnt", isDirectory: true)
-            let staged = work.appendingPathComponent("staged", isDirectory: true)
+            let stageDir = work.appendingPathComponent("staged", isDirectory: true)
             try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: stageDir, withIntermediateDirectories: true)
             log("挂载 dmg")
             _ = try await Self.run("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-noautoopen",
                                                         "-mountpoint", mount.path, dmg.path])
-            let stagedApp = staged.appendingPathComponent("NotiBridge.app")
+            let stagedApp = stageDir.appendingPathComponent("NotiBridge.app")
             do {
                 let src = mount.appendingPathComponent("NotiBridge.app")
                 guard FileManager.default.fileExists(atPath: src.path) else { throw UpdateError("dmg 里没有 NotiBridge.app") }
@@ -230,11 +280,15 @@ final class Updater: ObservableObject {
             }
             log("签名校验通过，包名 \(bid ?? "")，版本 \(ver)")
 
-            // 6. 替换并重启
-            try install(stagedApp: stagedApp, dmg: dmg, version: version)
+            self.staged = (stagedApp, dmg, version)
+            readyVersion = version
+            phase = .ready
+            status = "\(version) 已下载并校验通过，重启即可安装"
+            return true
         } catch {
             progress = nil
-            fail("更新失败：\(error.localizedDescription)")
+            fail("下载更新失败：\(error.localizedDescription)")
+            return false
         }
     }
 
@@ -338,17 +392,28 @@ final class Updater: ObservableObject {
     private func log(_ s: String) { onLog("[更新] \(s)") }
 
     private func download(_ url: URL, to dest: URL, expectedSize: Int) async throws {
-        let delegate = DownloadProgress { [weak self] fraction in
-            Task { @MainActor in self?.progress = fraction }
-        }
-        let (tmp, resp) = try await session.download(from: url, delegate: delegate)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateError("下载失败：HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)") }
+        // 用独立的 delegate 会话下载：async 版 download(from:delegate:) 不回调下载进度，进度条会一直不动
         try? FileManager.default.removeItem(at: dest)
-        try FileManager.default.moveItem(at: tmp, to: dest)
+        let total = Int64(expectedSize)
+        let d = FileDownloader(dest: dest, expectedSize: total) { [weak self] written, expected in
+            Task { @MainActor in
+                guard let self else { return }
+                self.progress = expected > 0 ? min(1, Double(written) / Double(expected)) : nil
+                self.progressText = expected > 0
+                    ? "\(Self.mb(written)) / \(Self.mb(expected))"
+                    : Self.mb(written)
+            }
+        }
+        defer { progressText = "" }
+        try await d.run(url)
         let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? -1
         if expectedSize > 0 && size != expectedSize {
             throw UpdateError("下载的文件大小不对（\(size) / \(expectedSize) 字节）")
         }
+    }
+
+    private static func mb(_ bytes: Int64) -> String {
+        String(format: "%.1f MB", Double(bytes) / 1_048_576)
     }
 
     nonisolated static func sha256(of url: URL) async throws -> String {
@@ -391,22 +456,69 @@ struct UpdateError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let onProgress: (Double) -> Void
-    private var last = -1.0
+/// 基于 delegate 的下载：逐块回调真实的已下载字节数。
+private final class FileDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let dest: URL
+    private let expectedSize: Int64
+    private let onProgress: (Int64, Int64) -> Void
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var moveError: Error?
+    private var lastReport = Date.distantPast
 
-    init(_ onProgress: @escaping (Double) -> Void) { self.onProgress = onProgress }
+    init(dest: URL, expectedSize: Int64, onProgress: @escaping (Int64, Int64) -> Void) {
+        self.dest = dest
+        self.expectedSize = expectedSize
+        self.onProgress = onProgress
+    }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
-                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let f = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        if f - last >= 0.01 || f >= 1 {
-            last = f
-            onProgress(f)
+    func run(_ url: URL) async throws {
+        let c = URLSessionConfiguration.ephemeral
+        c.httpAdditionalHeaders = ["User-Agent": UpdateCore.userAgent]
+        c.timeoutIntervalForRequest = 60
+        c.timeoutIntervalForResource = 30 * 60
+        let session = URLSession(configuration: c, delegate: self, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                self.continuation = cont
+                session.downloadTask(with: url).resume()
+            }
+        } onCancel: {
+            session.invalidateAndCancel()
         }
     }
 
-    // async download(from:delegate:) 自己处理文件，这里不需要实现
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        // GitHub 跳转到 CDN 后有时不给 Content-Length，用 Release 里记录的大小
+        let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedSize
+        let now = Date()
+        if now.timeIntervalSince(lastReport) >= 0.1 || totalBytesWritten >= total {
+            lastReport = now
+            onProgress(totalBytesWritten, total)
+        }
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        let code = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else {
+            moveError = UpdateError("下载失败：HTTP \(code)")
+            return
+        }
+        // 临时文件在这个回调返回后就会被删除，必须立即移走
+        do {
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.moveItem(at: location, to: dest)
+        } catch {
+            moveError = error
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let cont = continuation
+        continuation = nil
+        if let error { cont?.resume(throwing: error) }
+        else if let moveError { cont?.resume(throwing: moveError) }
+        else { cont?.resume() }
+    }
 }

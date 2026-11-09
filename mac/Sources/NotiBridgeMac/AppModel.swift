@@ -110,7 +110,29 @@ final class AppModel: ObservableObject {
         // 首次使用由引导页统一申请权限；完成引导后启动时只确认通知权限
         if onboarded {
             refreshNotificationStatus()
+            // 等应用启动完成后再读钥匙串（可能弹出说明和系统授权框）
+            DispatchQueue.main.async { [weak self] in self?.prepareKeychainAccess() }
         }
+    }
+
+    /// 启动时一次性读出所有配对密钥，让 macOS 的钥匙串授权（如果需要）集中在启动时出现，
+    /// 而不是在手机连上、通知到达的那一刻突然弹出。需要授权时先用一个提示说明原因。
+    func prepareKeychainAccess() {
+        let defaults = UserDefaults.standard
+        let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let last = defaults.string(forKey: "lastLaunchedVersion")
+        defer { defaults.set(current, forKey: "lastLaunchedVersion") }
+        guard !store.devices().isEmpty else { return }
+        if store.needsAuthorization() {
+            log("钥匙串需要授权（上次运行版本 \(last ?? "无")，当前 \(current)），启动时一次性询问")
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "接下来 macOS 可能会询问钥匙串权限"
+            alert.informativeText = "NotiBridge 把每台手机的配对密钥保存在你的钥匙串里。更新后 macOS 可能会为每台已配对的手机询问一次，请输入 Mac 登录密码并点“始终允许”，之后就不会再问。"
+            alert.addButton(withTitle: "好的")
+            alert.runModal()
+        }
+        store.preloadAll()
     }
 
     /// 首次启动引导是否已完成
@@ -120,6 +142,7 @@ final class AppModel: ObservableObject {
         onboarded = true
         UserDefaults.standard.set(true, forKey: "onboarded")
         refreshNotificationStatus()
+        prepareKeychainAccess()
         log("首次启动引导已完成")
     }
 
@@ -368,7 +391,7 @@ final class AppModel: ObservableObject {
             defaults.removePersistentDomain(forName: id)
         }
         for key in ["onboarded", "paused", "filter", "port", "macId", "copyOtp", "settingsUpdatedAt",
-                    "hfpDevice", "deviceAliases", "useMode", "updateAutoCheck", "updateAutoInstall", "updatePendingVersion"] {
+                    "hfpDevice", "deviceAliases", "useMode", "updateAutoCheck", "updateAutoInstall", "updatePendingVersion", "lastLaunchedVersion"] {
             defaults.removeObject(forKey: key)
         }
         defaults.synchronize()

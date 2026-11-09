@@ -34,6 +34,9 @@ public sealed class Updater : ObservableObject
     private bool _busy;
     private bool _failed;
     private bool _notifiedAvailable;
+    private string _progressText = "";
+    /// <summary>已下载、校验并解压好的新版（等用户点“重启并安装”）</summary>
+    private (string Exe, string Work, string Version)? _staged;
 
     /// <summary>返回 false 表示现在不适合更新（例如正在配对手机）</summary>
     public Func<bool> CanUpdateNow { get; set; } = () => true;
@@ -50,14 +53,14 @@ public sealed class Updater : ObservableObject
             {
                 // 首次（启动 30 秒后）：之后每 6 小时一次；顺便清理上次更新留下的文件
                 _timer.Interval = CheckInterval;
-                CleanupUpdateDir();
+                if (_staged is null && !IsBusy) CleanupUpdateDir();
             }
             if (AutoCheck) _ = CheckAsync(manual: false);
         };
         _retry.Tick += (_, _) =>
         {
             _retry.Stop();
-            _ = InstallAvailableAsync();
+            ApplyStaged();
         };
     }
 
@@ -140,6 +143,13 @@ public sealed class Updater : ObservableObject
         private set => Set(ref _progress, value);
     }
 
+    /// <summary>已下载 / 总大小</summary>
+    public string ProgressText
+    {
+        get => _progressText;
+        private set => Set(ref _progressText, value);
+    }
+
     public bool ProgressVisible
     {
         get => _progressVisible;
@@ -163,7 +173,9 @@ public sealed class Updater : ObservableObject
         private set => Set(ref _failed, value);
     }
 
-    public string InstallButtonText => _available is null ? "立即更新" : $"立即更新到 {_available.Version}";
+    public bool IsReady => _staged is { } st && _available is { } a && st.Version == a.Version;
+    public string InstallButtonText => _available is null ? "下载新版本"
+        : IsReady ? $"重启并安装 {_available.Version}" : $"下载 {_available.Version}";
     public string? ReleasePage => _available?.HtmlUrl;
 
     private void SetAvailable(UpdateCore.Release? r)
@@ -172,6 +184,7 @@ public sealed class Updater : ObservableObject
         Raise(nameof(HasUpdate));
         Raise(nameof(InstallButtonText));
         Raise(nameof(ReleasePage));
+        Raise(nameof(IsReady));
     }
 
     // ---------------- 检查 ----------------
@@ -221,34 +234,41 @@ public sealed class Updater : ObservableObject
         SetAvailable(release);
         Log($"发现新版本 {release.Version}");
         IsBusy = false;
-        if (AutoInstall)
+        if (IsReady)
         {
-            await InstallAvailableAsync();
+            Status = $"{release.Version} 已下载，重启即可安装";
+        }
+        else if (AutoInstall && !manual)
+        {
+            // 后台自动更新：下载、校验后直接安装并重新启动
+            if (await DownloadAvailableAsync()) ApplyStaged();
         }
         else
         {
-            Status = $"有新版本 {release.Version}";
+            // 手动检查只检查，由用户决定是否下载
+            Status = $"有新版本 {release.Version}，可以下载";
             if (!_notifiedAvailable && !manual)
             {
                 _notifiedAvailable = true;
-                ShowToast($"NotiBridge {release.Version} 可以更新了", "打开 设置 > 软件更新，点“立即更新”。");
+                ShowToast($"NotiBridge {release.Version} 可以更新了", "打开 设置 > 软件更新，点“下载”。");
             }
         }
     }
 
     // ---------------- 下载、校验、安装 ----------------
 
-    public async Task InstallAvailableAsync()
+    /// <summary>界面上的主按钮：没下载就下载；下载好了就重启安装。</summary>
+    public async Task PrimaryActionAsync()
     {
-        if (IsBusy || _available is null) return;
+        if (IsReady) ApplyStaged();
+        else await DownloadAvailableAsync();
+    }
+
+    /// <summary>下载、校验、解压新版，不重启。成功返回 true。</summary>
+    public async Task<bool> DownloadAvailableAsync()
+    {
+        if (IsBusy || _available is null) return false;
         var release = _available;
-        if (!CanUpdateNow())
-        {
-            Status = "正在配对手机，配对结束后再更新";
-            Log("正在配对手机，1 分钟后再尝试更新");
-            _retry.Start();
-            return;
-        }
         IsBusy = true;
         Failed = false;
         var version = release.Version;
@@ -307,30 +327,51 @@ public sealed class Updater : ObservableObject
                 throw new InvalidOperationException($"新版产品名不对（{fv.ProductName}），已取消");
             Log($"已解压并核对版本 {exeVersion}");
 
-            // 5. 交给新 exe 替换并重启
-            if (!CanUpdateNow())
-            {
-                IsBusy = false;
-                Status = "正在配对手机，配对结束后再更新";
-                _retry.Start();
-                return;
-            }
-            var target = Environment.ProcessPath ?? throw new InvalidOperationException("找不到当前程序路径");
-            Status = $"正在安装 {version}，即将重新启动…";
-            Log($"启动更新程序，替换 {target}");
-            Process.Start(new ProcessStartInfo(newExe)
-            {
-                UseShellExecute = false,
-                ArgumentList = { "--apply-update", Environment.ProcessId.ToString(), target },
-                WorkingDirectory = work,
-            });
-            ((App)Application.Current).QuitForUpdate();
+            _staged = (newExe, work, version);
+            Raise(nameof(IsReady));
+            Raise(nameof(InstallButtonText));
+            IsBusy = false;
+            Status = $"{version} 已下载并校验通过，重启即可安装";
+            return true;
         }
         catch (Exception ex)
         {
             ProgressVisible = false;
             IsBusy = false;
-            Fail($"更新失败：{ex.Message}");
+            Fail($"下载更新失败：{ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>交给新 exe 替换并重启。</summary>
+    public void ApplyStaged()
+    {
+        if (IsBusy || _staged is not { } st) return;
+        if (!CanUpdateNow())
+        {
+            Status = $"{st.Version} 已下载，配对结束后再安装";
+            Log("正在配对手机，1 分钟后再尝试安装");
+            _retry.Start();
+            return;
+        }
+        try
+        {
+            var target = Environment.ProcessPath ?? throw new InvalidOperationException("找不到当前程序路径");
+            IsBusy = true;
+            Status = $"正在安装 {st.Version}，即将重新启动…";
+            Log($"启动更新程序，替换 {target}");
+            Process.Start(new ProcessStartInfo(st.Exe)
+            {
+                UseShellExecute = false,
+                ArgumentList = { "--apply-update", Environment.ProcessId.ToString(), target },
+                WorkingDirectory = st.Work,
+            });
+            ((App)Application.Current).QuitForUpdate();
+        }
+        catch (Exception ex)
+        {
+            IsBusy = false;
+            Fail($"安装失败：{ex.Message}");
         }
     }
 
@@ -359,11 +400,13 @@ public sealed class Updater : ObservableObject
                     {
                         lastPct = pct;
                         Progress = pct;
+                        ProgressText = $"{pct}%  {done / 1048576.0:0.0} MB / {total / 1048576.0:0.0} MB";
                     }
                 }
             }
         }
         ProgressVisible = false;
+        ProgressText = "";
         var size = new FileInfo(dest).Length;
         if (expectedSize > 0 && size != expectedSize)
             throw new InvalidOperationException($"下载的文件大小不对（{size} / {expectedSize} 字节）");

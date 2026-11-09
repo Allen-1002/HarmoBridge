@@ -454,6 +454,8 @@
                                 <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,8,0,0" />
                                 <ProgressBar Value="{Binding Progress, Mode=OneWay}" Maximum="100" Height="6" Margin="0,6,0,0"
                                              Visibility="{Binding ProgressVisible, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock Text="{Binding ProgressText}" Style="{StaticResource Hint}" Margin="0,4,0,0"
+                                           Visibility="{Binding ProgressVisible, Converter={StaticResource BoolToVis}}" />
                                 <TextBlock Text="{Binding Notes}" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,6,0,0"
                                            Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVis}}" />
                                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
@@ -465,7 +467,7 @@
                                             Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVis}}" />
                                 </StackPanel>
                                 <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,8,0,0"
-                                           Text="从 GitHub Releases 下载新版，校验 SHA256 和版本号后自动替换并重新启动。启动 30 秒后检查一次，之后每 6 小时检查一次；正在配对手机时不会更新。" />
+                                           Text="点“检查更新”只检查，不会下载；发现新版后可以先下载，校验 SHA256 和版本号后再选择重启安装。打开“自动下载并安装”时，后台检查（启动 30 秒后一次，之后每 6 小时一次）发现新版会自动下载并重启安装；正在配对手机时不会安装。" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
