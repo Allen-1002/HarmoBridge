@@ -465,9 +465,9 @@ public sealed class Updater : ObservableObject
         try
         {
             using var old = Process.GetProcessById(pid);
-            if (!old.WaitForExit(30_000))
+            if (!old.WaitForExit(10_000))
             {
-                ApplyLogLine("旧进程 30 秒内没有退出，强制结束");
+                ApplyLogLine("旧进程 10 秒内没有退出，强制结束");
                 try { old.Kill(); old.WaitForExit(5000); }
                 catch (Exception) { }
             }
@@ -487,22 +487,7 @@ public sealed class Updater : ObservableObject
             }
             else
             {
-                for (var n = 0; ; n++)
-                {
-                    try
-                    {
-                        File.Copy(self, fullTarget, true);
-                        break;
-                    }
-                    catch (IOException) when (n < 20)
-                    {
-                        Thread.Sleep(500);
-                    }
-                    catch (UnauthorizedAccessException) when (n < 20)
-                    {
-                        Thread.Sleep(500);
-                    }
-                }
+                Installer.ReplaceFile(self, fullTarget);
             }
             ok = true;
             ApplyLogLine("替换完成");
@@ -510,8 +495,10 @@ public sealed class Updater : ObservableObject
         catch (Exception ex)
         {
             ApplyLogLine($"替换失败：{ex}");
-            MessageBox.Show($"NotiBridge 自动更新失败：{ex.Message}\n\n将继续运行原来的版本。可以在 设置 > 软件更新 里重试，或从 GitHub 手动下载。",
-                "NotiBridge 更新", MessageBoxButton.OK, MessageBoxImage.Warning);
+            // DefaultDesktopOnly：提示框显示在最前面，不会藏在其他窗口后面只在任务栏留一个图标
+            MessageBox.Show($"NotiBridge 自动更新失败：{ex.Message}\n\n将继续运行原来的版本。可以在 设置 > 软件更新 里重试，或从 GitHub 手动下载。\n详细记录：{ApplyLog}",
+                "NotiBridge 更新", MessageBoxButton.OK, MessageBoxImage.Warning, MessageBoxResult.OK,
+                MessageBoxOptions.DefaultDesktopOnly);
         }
 
         try

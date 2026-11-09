@@ -116,24 +116,64 @@ internal static class Installer
         var src = Environment.ProcessPath ?? throw new InvalidOperationException("找不到程序路径");
         Directory.CreateDirectory(InstallDir);
         StopOtherInstances(InstalledExe);
-        // 正在被替换的文件可能还没完全释放，重试几次
-        for (var i = 0; ; i++)
-        {
-            try
-            {
-                File.Copy(src, InstalledExe, true);
-                break;
-            }
-            catch (IOException) when (i < 10)
-            {
-                Thread.Sleep(300);
-            }
-        }
+        ReplaceFile(src, InstalledExe);
         CreateShortcut(StartMenuLink, InstalledExe);
         CreateShortcut(DesktopLink, InstalledExe);
         RegisterUninstall();
         // 开机启动项指向新位置
         if (AutoStartPointsTo(src)) AutoStart.SetPath(InstalledExe);
+    }
+
+    /// <summary>
+    /// 用 src 覆盖 dest。旧进程刚退出时 exe 可能还被系统（杀毒扫描等）占用，先重试约 10 秒；
+    /// 仍然失败就把旧文件改名（正在运行的 exe 也允许改名），再把新文件复制过去。旧文件下次启动时清理。
+    /// </summary>
+    public static void ReplaceFile(string src, string dest)
+    {
+        Exception? last = null;
+        for (var i = 0; i < 20; i++)
+        {
+            try
+            {
+                File.Copy(src, dest, true);
+                return;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                last = e;
+                Thread.Sleep(500);
+            }
+        }
+        if (!File.Exists(dest)) throw last ?? new IOException($"无法写入 {dest}");
+        var moved = $"{dest}.old-{DateTime.Now:yyyyMMddHHmmss}";
+        File.Move(dest, moved);
+        try
+        {
+            File.Copy(src, dest, true);
+        }
+        catch (Exception)
+        {
+            // 复制失败：把旧文件放回去，保证还能打开原来的版本
+            try { File.Move(moved, dest, true); } catch (Exception) { }
+            throw;
+        }
+    }
+
+    /// <summary>删除自动更新时改名留下的旧 exe（NotiBridge.exe.old-*）。</summary>
+    public static void CleanupReplacedFiles()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Environment.ProcessPath ?? "");
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+            foreach (var f in Directory.GetFiles(dir, "NotiBridge.exe.old-*"))
+            {
+                try { File.Delete(f); } catch (Exception) { }
+            }
+        }
+        catch (Exception)
+        {
+        }
     }
 
     private static bool AutoStartPointsTo(string exe)

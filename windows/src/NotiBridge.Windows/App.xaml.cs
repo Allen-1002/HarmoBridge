@@ -80,6 +80,7 @@ public partial class App : Application
             ex.Handled = true;
         };
 
+        Installer.CleanupReplacedFiles();
         Model = new AppModel();
         Model.ShowWindowRequested += ShowMain;
         _tray = new TrayIcon(Model, ShowMain, Quit);
@@ -141,7 +142,20 @@ public partial class App : Application
     public void QuitForUpdate()
     {
         ReleaseInstanceLock();
-        Quit();
+        // 兜底：无论清理时卡在哪里，3 秒后强制结束进程，让更新程序可以替换文件
+        new Thread(() =>
+        {
+            Thread.Sleep(3000);
+            Environment.Exit(0);
+        }) { IsBackground = true }.Start();
+        try
+        {
+            Quit();
+        }
+        catch (Exception)
+        {
+            Environment.Exit(0);
+        }
     }
 
     public void Uninstall()
