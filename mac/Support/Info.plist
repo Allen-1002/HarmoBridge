@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>NotiBridge</string>
+	<key>CFBundleExecutable</key>
+	<string>NotiBridgeMac</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.xsh.notibridge.desktop</string>
+	<key>CFBundleName</key>
+	<string>NotiBridge</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>鸿蒙系统要求读取通知时绑定一台已配对的蓝牙设备，这台 Mac 可以作为这台设备；也用于实验性的通话功能。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_notibridge._tcp</string>
+	</array>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Shenghao Xu. MIT License.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>NotiBridge 需要访问本地网络：让同一 Wi-Fi 下的手机发现这台 Mac，并接收手机发来的加密通知。不会连接互联网上的任何服务器。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>仅用于实验性的通话功能：在 Mac 上接听手机来电时作为话筒。</string>
+</dict>
+</plist>

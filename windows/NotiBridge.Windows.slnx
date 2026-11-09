@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NotiBridge.Core/NotiBridge.Core.csproj" />
+    <Project Path="src/NotiBridge.Windows/NotiBridge.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NotiBridge.Core.Tests/NotiBridge.Core.Tests.csproj" />
+  </Folder>
+</Solution>

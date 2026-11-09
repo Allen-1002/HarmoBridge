@@ -1,0 +1,29 @@
+/node_modules
+/harmony/oh_modules
+/harmony/local.properties
+/harmony/.idea
+/.idea
+**/build
+/harmony/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+# 发布产物与本机文件
+/dist
+/mac/build
+/mac/.build
+/mac/.swiftpm
+.DS_Store
+# 签名材料（绝不提交）
+*.p12
+*.cer
+*.csr
+*.p7b
+
+# Windows 客户端编译产物
+/windows/dist
+/windows/**/bin
+/windows/**/obj

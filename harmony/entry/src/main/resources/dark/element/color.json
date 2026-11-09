@@ -1,0 +1,72 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#000000"
+    },
+    {
+      "name": "hb_bg",
+      "value": "#0F1115"
+    },
+    {
+      "name": "hb_card",
+      "value": "#1B1E24"
+    },
+    {
+      "name": "hb_text",
+      "value": "#F2F3F5"
+    },
+    {
+      "name": "hb_text2",
+      "value": "#A0A7B4"
+    },
+    {
+      "name": "hb_text3",
+      "value": "#6B7280"
+    },
+    {
+      "name": "hb_accent",
+      "value": "#4DA3F5"
+    },
+    {
+      "name": "hb_accent_soft",
+      "value": "#1C2A3A"
+    },
+    {
+      "name": "hb_success",
+      "value": "#2FD39B"
+    },
+    {
+      "name": "hb_success_soft",
+      "value": "#16302A"
+    },
+    {
+      "name": "hb_warning",
+      "value": "#FFB84D"
+    },
+    {
+      "name": "hb_warning_soft",
+      "value": "#3A2E14"
+    },
+    {
+      "name": "hb_danger",
+      "value": "#FF6B6E"
+    },
+    {
+      "name": "hb_danger_soft",
+      "value": "#3A1D1F"
+    },
+    {
+      "name": "hb_divider",
+      "value": "#2A2E36"
+    },
+    {
+      "name": "hb_hero_start",
+      "value": "#2C3A8C"
+    },
+    {
+      "name": "hb_hero_end",
+      "value": "#00897B"
+    }
+  ]
+}

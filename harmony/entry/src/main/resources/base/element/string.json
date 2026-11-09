@@ -1,0 +1,32 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "NotiBridge 通知订阅可行性验证"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "NotiBridge 主界面"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "NotiBridge"
+    },
+    {
+      "name": "NotificationSubscriberExtAbility_desc",
+      "value": "接收系统转发的本机通知，用于同步到已配对的蓝牙设备"
+    },
+    {
+      "name": "NotificationSubscriberExtAbility_label",
+      "value": "NotiBridge 通知订阅"
+    },
+    {
+      "name": "reason_access_bluetooth",
+      "value": "系统规定读取通知必须绑定一台已配对的蓝牙设备，用于读取已配对设备列表并选择其中一台（例如你的 Mac）"
+    },
+    {
+      "name": "reason_subscribe_notification",
+      "value": "读取你在系统授权页中选择的应用的通知，并加密转发到你自己的 Mac"
+    }
+  ]
+}
