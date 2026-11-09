@@ -26,6 +26,11 @@ const PENDING_KEY = 'pendingUnpair';
 const PENDING_ALIAS_PREFIX = 'notibridge.computer.unpairkey.';
 // v1.2：被电脑取消配对、已自动从列表移除的电脑名称，等界面提示一次
 const NOTICE_KEY = 'unpairNotices';
+// 1.1.0：配对方式版本（协议 v2，CPace）。小于 2 时清除旧配对一次
+const SCHEMA_KEY = 'pairingSchema';
+const PAIRING_SCHEMA = 2;
+const REPAIR_NOTICE_KEY = 'repairNotice';
+const PENDING_SINCE_PREFIX = 'unpairSince.';
 
 function prefs(ctx: common.Context): preferences.Preferences {
   // 配对列表可能被另一个进程（App 界面 / 通知订阅扩展）改过：先丢弃本进程缓存
@@ -152,10 +157,46 @@ function migrateLegacy(p: preferences.Preferences): void {
   p.flushSync();
 }
 
+/**
+ * 1.1.0：协议 v1 的配对全部作废。第一次读配对列表时（App 界面或通知订阅扩展，谁先运行都行）清除一次，
+ * 以前有过配对时记下提示，首页弹一次“请重新配对”。
+ */
+function migratePairingSchema(p: preferences.Preferences): void {
+  if ((p.getSync(SCHEMA_KEY, 0) as number) >= PAIRING_SCHEMA) {
+    return;
+  }
+  migrateLegacy(p);
+  const list = readList(p);
+  const pending = readPending(p);
+  list.forEach((m: MacInfo) => removeSecret(aliasFor(m.macId)));
+  pending.forEach((m: MacInfo) => removeSecret(PENDING_ALIAS_PREFIX + m.macId));
+  p.deleteSync(LIST_KEY);
+  p.deleteSync(PENDING_KEY);
+  p.deleteSync(NOTICE_KEY);
+  if (list.length > 0 || pending.length > 0) {
+    p.putSync(REPAIR_NOTICE_KEY, true);
+  }
+  p.putSync(SCHEMA_KEY, PAIRING_SCHEMA);
+  p.flushSync();
+  Logger.info(`pairing schema migrated to v${PAIRING_SCHEMA}: cleared ${list.length} pairing(s)`);
+}
+
+/** 取出并清除“请重新配对”提示（升级前有过配对时才有） */
+export function takeRepairNotice(ctx: common.Context): boolean {
+  const p = prefs(ctx);
+  migratePairingSchema(p);
+  const v = p.getSync(REPAIR_NOTICE_KEY, false) as boolean;
+  if (v) {
+    p.deleteSync(REPAIR_NOTICE_KEY);
+    p.flushSync();
+  }
+  return v;
+}
+
 /** 所有已配对、且密钥仍在的电脑。 */
 export function pairedComputers(ctx: common.Context): Array<MacInfo> {
   const p = prefs(ctx);
-  migrateLegacy(p);
+  migratePairingSchema(p);
   return readList(p).filter((m: MacInfo) => loadKeyFor(m.macId) !== undefined);
 }
 
@@ -165,6 +206,7 @@ export function findComputer(ctx: common.Context, macId: string): MacInfo | unde
 
 /** 配对成功：保存（同一台电脑重新配对时覆盖旧的）。 */
 export function saveComputer(ctx: common.Context, info: MacInfo, key: Uint8Array): void {
+  migratePairingSchema(prefs(ctx)); // 先完成升级清理，避免之后把刚配好的 v2 配对当成旧配对删掉
   clearPendingUnpair(ctx, info.macId); // 重新配对了同一台电脑：不再需要通知它取消配对
   addSecret(aliasFor(info.macId), key);
   const p = prefs(ctx);
@@ -203,6 +245,7 @@ export function forgetComputer(ctx: common.Context, macId: string, notifyLater: 
       const pending = readPending(p).filter((x: MacInfo) => x.macId !== macId);
       pending.push(m);
       p.putSync(PENDING_KEY, JSON.stringify(pending));
+      p.putSync(PENDING_SINCE_PREFIX + macId, Date.now());
     }
   }
   removeSecret(aliasFor(macId));
@@ -226,22 +269,30 @@ function readPending(p: preferences.Preferences): Array<MacInfo> {
 
 /** 在手机上删除了、但电脑还不知道的电脑（密钥仍在待通知别名下）。 */
 export function pendingUnpairs(ctx: common.Context): Array<MacInfo> {
-  return readPending(prefs(ctx)).filter((m: MacInfo) => loadPendingKey(m.macId) !== undefined);
+  const p = prefs(ctx);
+  migratePairingSchema(p);
+  return readPending(p).filter((m: MacInfo) => loadPendingKey(m.macId) !== undefined);
 }
 
 export function loadPendingKey(macId: string): Uint8Array | undefined {
   return querySecret(PENDING_ALIAS_PREFIX + macId);
 }
 
-/** 已通知到电脑（或电脑本来就不认识这台手机）：删掉保留的密钥。 */
+/** 什么时候在手机上删除的（毫秒，0 = 未知），用来决定何时放弃通知电脑 */
+export function pendingSince(ctx: common.Context, macId: string): number {
+  return prefs(ctx).getSync(PENDING_SINCE_PREFIX + macId, 0) as number;
+}
+
+/** 已通知到电脑（或一直无法确认、已放弃）：删掉保留的密钥。 */
 export function clearPendingUnpair(ctx: common.Context, macId: string): void {
   removeSecret(PENDING_ALIAS_PREFIX + macId);
   const p = prefs(ctx);
+  p.deleteSync(PENDING_SINCE_PREFIX + macId);
   const pending = readPending(p);
   if (pending.find((m: MacInfo) => m.macId === macId) !== undefined) {
     p.putSync(PENDING_KEY, JSON.stringify(pending.filter((m: MacInfo) => m.macId !== macId)));
-    p.flushSync();
   }
+  p.flushSync();
 }
 
 /** 局域网发现到待通知的电脑换了地址时更新。 */

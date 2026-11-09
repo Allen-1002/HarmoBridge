@@ -41,7 +41,6 @@ struct DebugPage {
   @State selectedAddr: string = '';
   @State subscribeState: string = '未检查';
   @State records: Array<EventRecord> = [];
-  @State showContent: boolean = false;
   @State logs: Array<OpLog> = [];
   @State syncOn: boolean = true;
   @State blockSensitive: boolean = true;
@@ -197,13 +196,10 @@ struct DebugPage {
 
   private recordSummary(r: EventRecord): string {
     if (r.kind === 'publish') {
-      const rawTitle: string = r.title === undefined ? '' : r.title;
-      const rawText: string = r.text === undefined ? '' : r.text;
       const appName: string = r.appName === undefined ? '' : r.appName;
       const bundle: string = r.bundleName === undefined ? '' : r.bundleName;
-      const title = this.showContent ? rawTitle : `[标题已隐藏 ${rawTitle.length} 字]`;
-      const text = this.showContent ? rawText : `[正文已隐藏 ${rawText.length} 字]`;
-      return `收到 ${appName}(${bundle}) slot=${r.slotType}\nhash=${r.hashCode}\n${title}\n${text}`;
+      const targets: string = r.targets === undefined || r.targets.length === 0 ? '' : `\n发往：${r.targets}`;
+      return `收到 ${appName}(${bundle})\nhash=${r.hashCode}\n结果：${r.result === undefined ? '' : r.result}${targets}`;
     }
     if (r.kind === 'cancel') {
       return `撤销 ${JSON.stringify(r.cancelHashCodes)}`;
@@ -287,7 +283,6 @@ struct DebugPage {
           .fontSize(12).fontColor('#888888')
         Flex({ wrap: FlexWrap.Wrap }) {
           this.Btn('刷新', () => this.refreshRecords())
-          this.Btn(this.showContent ? '隐藏内容' : '显示内容', () => { this.showContent = !this.showContent; })
           this.Btn('清空', () => { clearRecords(this.ctx().filesDir); this.refreshRecords(); })
         }
         ForEach(this.records, (r: EventRecord) => {
@@ -301,7 +296,7 @@ struct DebugPage {
           .margin({ top: 6 })
           .backgroundColor('#F2F3F5')
           .borderRadius(8)
-        }, (r: EventRecord) => r.recordTime + '-' + r.kind + '-' + (r.hashCode === undefined ? '' : r.hashCode) + '-' + this.showContent)
+        }, (r: EventRecord) => r.recordTime + '-' + r.kind + '-' + (r.hashCode === undefined ? '' : r.hashCode))
 
         this.Section('7. 操作日志')
         ForEach(this.logs, (l: OpLog) => {

@@ -4,11 +4,12 @@ import { AppStatus, getUseMode, isOnboarded, loadStatus, setUseMode } from '../c
 import { describeError } from '../common/ErrorDescriber';
 import { resetAllData } from '../common/DataReset';
 import { Logger } from '../common/Logger';
-import { clearRecords, EventRecord, readRecords } from '../common/NotificationStore';
+import { clearRecords, deleteLegacyRecords, EventRecord, readRecords, recordsEnabled, setRecordsEnabled } from '../common/NotificationStore';
 import { loadSettings, saveSettings, SyncSettings } from '../common/PhoneFilter';
 import { openGrantSettings } from '../common/SubscriptionService';
 import { SettingsSync } from '../common/SettingsSync';
-import { takeUnpairNotices } from '../common/PairingStore';
+import { takeRepairNotice, takeUnpairNotices } from '../common/PairingStore';
+import { writeSettings } from '../common/PhoneFilter';
 import { PendingUnpair } from '../common/PendingUnpair';
 import { cachedUpdate, checkUpdate, currentVersion, openReleasePage, UpdateInfo } from '../common/UpdateCheck';
 import { AuroraBackground, Card, Chip, GLASS, GLASS_THIN, NavRow, SectionTitle, StatTile, SwitchRow } from '../components/UI';
@@ -57,11 +58,11 @@ struct Index {
   @State tab: number = 0;
   @State status: AppStatus = new AppStatus();
   @State settings: SyncSettings = {
-    paused: false, blockSensitive: true, blockedBundles: [], copyOtp: true, updatedAt: 0
+    paused: false, blockSensitive: true, blockedBundles: [], copyOtp: true, updatedAt: 0, allowSensitiveOtp: false
   };
+  @State recordsOn: boolean = true;
   @State records: Array<EventRecord> = [];
   @State cancelled: Array<string> = [];
-  @State showContent: boolean = false;
   @State useEsp32: boolean = false;
   @State loaded: boolean = false;
   @State appVersion: string = currentVersion();
@@ -77,7 +78,22 @@ struct Index {
       setTimeout(() => this.getUIContext().getRouter().replaceUrl({ url: 'pages/OnboardingPage' }), 0);
       return;
     }
+    deleteLegacyRecords(this.ctx().filesDir);
     this.reload();
+    if (takeRepairNotice(this.ctx())) {
+      setTimeout(() => this.showRepairNotice(), 300);
+    }
+  }
+
+  /** 1.1.0 第一次打开：旧配对已清除（协议 v2），提示重新配对 */
+  private showRepairNotice(): void {
+    this.getUIContext().showAlertDialog({
+      title: '安全升级：配对方式已更新，请在电脑和手机上重新配对',
+      message: 'NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下配对过程也无法离线猜出配对码，并加了双向防重放。' +
+        '旧的配对已失效并已清除。\n\n请把电脑端也更新到 1.1.0，在电脑上点“配对新手机”，再到“电脑连接”里重新配对。',
+      confirm: { value: '知道了', action: () => {
+      } },
+    });
   }
 
   onPageShow(): void {
@@ -158,6 +174,7 @@ struct Index {
     });
     this.cancelled = cancelled;
     this.records = all.filter((r: EventRecord) => r.kind === 'publish');
+    this.recordsOn = recordsEnabled(this.ctx().filesDir);
   }
 
   private updateSettings(fn: (s: SyncSettings) => void): void {
@@ -355,21 +372,17 @@ struct Index {
         }
         .width('100%')
 
-        if (this.showContent) {
-          Text(r.title === undefined ? '' : r.title)
-            .fontSize(14)
-            .fontColor($r('app.color.hb_text'))
-            .margin({ top: 4 })
+        Text(r.result === undefined || r.result.length === 0 ? '已处理' : r.result)
+          .fontSize(13)
+          .fontColor($r('app.color.hb_text2'))
+          .margin({ top: 4 })
+        if (r.targets !== undefined && r.targets.length > 0) {
+          Text(`发往：${r.targets}`)
+            .fontSize(12)
+            .fontColor($r('app.color.hb_text3'))
+            .margin({ top: 2 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(r.text === undefined ? '' : r.text)
-            .fontSize(13)
-            .fontColor($r('app.color.hb_text2'))
-            .margin({ top: 2 })
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        } else {
-          Text('内容已隐藏').fontSize(13).fontColor($r('app.color.hb_text3')).margin({ top: 4 })
         }
       }
       .alignItems(HorizontalAlign.Start)
@@ -389,13 +402,6 @@ struct Index {
     Column() {
       Row() {
         Text('通知').fontSize(28).fontWeight(FontWeight.Bold).fontColor($r('app.color.hb_text')).layoutWeight(1)
-        SymbolGlyph(this.showContent ? $r('sys.symbol.eye') : $r('sys.symbol.eye_slash'))
-          .fontSize(22)
-          .fontColor([$r('app.color.hb_text2')])
-          .margin({ right: 18 })
-          .onClick(() => {
-            this.showContent = !this.showContent;
-          })
         SymbolGlyph($r('sys.symbol.arrow_clockwise'))
           .fontSize(22)
           .fontColor([$r('app.color.hb_text2')])
@@ -415,8 +421,10 @@ struct Index {
       if (this.records.length === 0) {
         Column({ space: 8 }) {
           SymbolGlyph($r('sys.symbol.bell')).fontSize(48).fontColor([$r('app.color.hb_text3')])
-          Text('还没有收到通知').fontSize(15).fontColor($r('app.color.hb_text2'))
-          Text('完成设置后，这里会显示最近同步的通知（仅保存在本机）').fontSize(12).fontColor($r('app.color.hb_text3'))
+          Text(this.recordsOn ? '还没有收到通知' : '通知记录已关闭').fontSize(15).fontColor($r('app.color.hb_text2'))
+          Text(this.recordsOn ? '这里只记录应用、时间和处理结果（不保存通知内容，本机保留 7 天）' : '可以在“设置 → 隐私”里重新打开')
+            .fontSize(12)
+            .fontColor($r('app.color.hb_text3'))
         }
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
@@ -426,7 +434,7 @@ struct Index {
             ListItem() {
               this.NotificationItem(r)
             }
-          }, (r: EventRecord) => r.recordTime + '-' + (r.hashCode === undefined ? '' : r.hashCode) + '-' + this.showContent)
+          }, (r: EventRecord) => r.recordTime + '-' + (r.hashCode === undefined ? '' : r.hashCode))
         }
         .layoutWeight(1)
         .padding({ left: 16, right: 16 })
@@ -508,8 +516,8 @@ struct Index {
               }),
             })
             SwitchRow({
-              title: '验证码复制到电脑剪贴板',
-              subtitle: '只发送验证码数字，不发送短信全文',
+              title: '验证码同步',
+              subtitle: '只把验证码数字发到电脑剪贴板，不发送短信全文；被屏蔽的应用不发',
               isOn: this.settings.copyOtp,
               onToggle: (on: boolean) => this.updateSettings((s: SyncSettings) => {
                 s.copyOtp = on;
@@ -523,6 +531,49 @@ struct Index {
               onToggle: (on: boolean) => this.updateSettings((s: SyncSettings) => {
                 s.blockSensitive = on;
               }),
+            })
+          }
+        }
+        Text('这三个开关会和电脑端双向同步。').fontSize(12).fontColor($r('app.color.hb_text3')).width('100%')
+          .margin({ left: 8, top: 6 })
+        Card() {
+          SwitchRow({
+            title: '也同步银行、支付类验证码',
+            subtitle: '默认不同步（开启敏感过滤时）；只在这台手机上生效',
+            isOn: this.settings.allowSensitiveOtp,
+            showDivider: false,
+            onToggle: (on: boolean) => {
+              const s = loadSettings(this.ctx());
+              s.allowSensitiveOtp = on;
+              writeSettings(this.ctx(), s); // 本机开关：不改修改时间、不同步到电脑
+              this.settings = s;
+            },
+          })
+        }
+        .margin({ top: 8 })
+
+        SectionTitle({ title: '隐私' })
+        Card() {
+          Column() {
+            SwitchRow({
+              title: '记录收到的通知',
+              subtitle: '只记应用、时间和处理结果，不保存内容；本机保留 7 天、最多 200 条',
+              isOn: this.recordsOn,
+              onToggle: (on: boolean) => {
+                setRecordsEnabled(this.ctx().filesDir, on);
+                this.recordsOn = on;
+                this.loadRecords();
+              },
+            })
+            NavRow({
+              symbol: $r('sys.symbol.trash'),
+              title: '清空通知记录',
+              subtitle: '删除本机保存的全部记录',
+              onTap: () => {
+                clearRecords(this.ctx().filesDir);
+                this.loadRecords();
+                promptAction.showToast({ message: '已清空通知记录', duration: 2000 });
+              },
             })
           }
         }

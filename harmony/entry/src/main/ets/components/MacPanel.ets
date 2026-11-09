@@ -14,11 +14,11 @@ function unpairOutcomeText(name: string, r: UnpairOutcome): string {
     case 'delivered':
       return `已删除，“${name}”上的配对也已同步取消`;
     case 'notPaired':
-      return `已删除（“${name}”上本来就没有这台手机的配对）`;
+      return `已删除。“${name}”一直没有确认取消配对，请在电脑上检查并手动删除这台手机`;
     case 'oldVersion':
       return `已删除。“${name}”上的 NotiBridge 版本较旧，请在电脑上手动取消配对`;
     default:
-      return `已删除。“${name}”现在不在线，等它上线后会自动取消电脑上的配对`;
+      return `已删除。“${name}”现在不在线或暂时无法确认，等它上线后会自动取消电脑上的配对`;
   }
 }
 

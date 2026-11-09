@@ -1,13 +1,15 @@
 import { common } from '@kit.AbilityKit';
 import { Logger } from './Logger';
 import { LinkState, MacLink } from './MacLink';
-import { clearPendingUnpair, loadPendingKey, MacInfo, pendingUnpairs } from './PairingStore';
+import { clearPendingUnpair, loadPendingKey, MacInfo, pendingSince, pendingUnpairs } from './PairingStore';
 
 /** 同一台电脑两次尝试之间至少间隔这么久（除非刚在局域网里发现它） */
 const MIN_INTERVAL_MS = 30000;
 /** 认证后等电脑回执的时间；旧版电脑不认识 unpair、不会回执 */
 const ACK_WAIT_MS = 3000;
 const GIVE_UP_MS = 15000;
+/** v2：电脑回 unknown_device / auth_failed 未经认证（可能是伪造的），不立即放弃，最多重试这么久 */
+const MAX_PENDING_MS = 7 * 24 * 3600 * 1000;
 
 export type UnpairOutcome = 'delivered' | 'notPaired' | 'oldVersion' | 'offline';
 
@@ -15,9 +17,10 @@ const inflight: Set<string> = new Set<string>();
 const lastTry: Map<string, number> = new Map<string, number>();
 
 /**
- * v1.2 双向取消配对：用户在手机上删除了电脑，但当时电脑不一定在线。
+ * 双向取消配对：用户在手机上删除了电脑，但当时电脑不一定在线。
  * 删除时密钥转存到待通知列表；之后每次打开 App、通知转发、局域网发现到这台电脑时，
- * 连接并发送 unpair，让电脑也删除这台手机。送达或电脑本来就不认识这台手机后删除保留的密钥。
+ * 用这把密钥认证后发送 unpair，让电脑也删除这台手机。只有认证后的 ack(unpaired) 才算送达；
+ * 未认证的错误回复不会让手机提前丢掉密钥（最多重试 7 天）。
  */
 export class PendingUnpair {
   /** 尝试通知所有待通知的电脑（force = 不受最短间隔限制）。 */
@@ -78,8 +81,11 @@ export class PendingUnpair {
           // 旧版电脑不认识 unpair，会忽略且不回执：等一会儿没有回执就放弃（无法让旧版电脑自动删除）
           setTimeout(() => finish('oldVersion'), ACK_WAIT_MS);
         } else if (s === 'error') {
-          // unknown_device：电脑本来就不认识这台手机；auth_failed：电脑上的密钥已不是这一把（已重新配对过）
-          finish(detail === 'unknown_device' || detail === 'auth_failed' ? 'notPaired' : 'offline');
+          // 电脑说不认识这台手机：可能早已删除，也可能是局域网上有人伪造回复。保留密钥继续重试，超过 7 天才放弃。
+          const denied = detail === 'unknown_device' || detail === 'auth_failed';
+          const since = pendingSince(ctx, mac.macId);
+          const expired = since > 0 && Date.now() - since > MAX_PENDING_MS;
+          finish(denied && expired ? 'notPaired' : 'offline');
         }
       },
       onLog: (ok: boolean, msg: string): void => {
