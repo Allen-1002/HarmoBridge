@@ -14,7 +14,7 @@
     <RootNamespace>HarmoBridge.Windows</RootNamespace>
     <ApplicationIcon>Assets\HarmoBridge.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Product>HarmoBridge</Product>
     <Company>HarmoBridge</Company>
     <Description>把鸿蒙手机通知同步到 Windows</Description>

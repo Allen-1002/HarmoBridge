@@ -17,6 +17,13 @@ internal static class AutoStart
         }
     }
 
+    /// <summary>安装后把开机启动项改指向安装位置。</summary>
+    public static void SetPath(string exe)
+    {
+        using var k = Registry.CurrentUser.CreateSubKey(RunKey);
+        k.SetValue(Name, $"\"{exe}\" --background");
+    }
+
     public static void Set(bool on)
     {
         using var k = Registry.CurrentUser.CreateSubKey(RunKey);

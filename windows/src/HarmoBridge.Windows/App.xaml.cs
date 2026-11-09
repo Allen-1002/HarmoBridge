@@ -21,8 +21,13 @@ public partial class App : Application
         base.OnStartup(e);
         if (e.Args.Contains("--uninstall"))
         {
-            Notifier.Uninstall();
-            AutoStart.Set(false);
+            Installer.RunUninstall(e.Args.Contains("--quiet"));
+            Shutdown();
+            return;
+        }
+        // 首次运行提示安装；已安装时转交给安装好的那份（或更新它）
+        if (Installer.HandleStartup(AppSettings.Load(), e.Args))
+        {
             Shutdown();
             return;
         }
@@ -70,6 +75,32 @@ public partial class App : Application
         _main.Show();
         if (_main.WindowState == WindowState.Minimized) _main.WindowState = WindowState.Normal;
         _main.Activate();
+    }
+
+    /// <summary>退出当前进程并从指定位置重新启动（安装后使用）。</summary>
+    public void RestartFrom(string exe)
+    {
+        ReleaseInstanceLock();
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true }); }
+        catch (Exception) { }
+        Quit();
+    }
+
+    public void Uninstall()
+    {
+        ReleaseInstanceLock();
+        _tray?.Dispose();
+        Model.Shutdown();
+        Installer.RunUninstall(false);
+        Shutdown();
+    }
+
+    private void ReleaseInstanceLock()
+    {
+        try { _mutex?.ReleaseMutex(); }
+        catch (Exception) { }
+        _mutex?.Dispose();
+        _mutex = null;
     }
 
     public void Quit()

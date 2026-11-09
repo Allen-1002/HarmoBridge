@@ -26,6 +26,7 @@ cd windows
 ```
 
 产物是 `windows/dist/HarmoBridge.exe`（单文件，约 85 MB，自带 .NET 运行时，复制到 Windows 上直接运行即可）。
+加 `-p:SelfContained=false` 可以打出依赖系统 .NET 10 桌面运行时的小体积版本（约 30 MB，压缩后约 10 MB）。
 
 只跑协议单元测试（任何系统都可以）：
 
@@ -38,6 +39,10 @@ cd windows && dotnet test tests/HarmoBridge.Core.Tests
 ## 首次运行
 
 1. 双击 `HarmoBridge.exe`。SmartScreen 提示“未知发布者”时点“更多信息 → 仍要运行”（程序未做代码签名）。
+   程序会询问是否安装到这台电脑：选“是”会复制到 `%LOCALAPPDATA%\Programs\HarmoBridge\`，
+   在开始菜单和桌面创建快捷方式，并出现在“设置 > 应用 > 已安装的应用”里（不需要管理员权限）。
+   之后下载的压缩包可以删掉。选“否”就直接从当前位置运行，以后可以在“设置 > 关于”里再安装。
+   运行新版本 exe 时会提示更新已安装的版本。加 `--portable` 参数运行则不提示安装。
 2. Windows 防火墙弹窗时勾选**专用网络**并允许。当前 Wi-Fi 被设为“公用网络”时手机连不上，需要在 设置 > 网络和 Internet 里改为“专用”。
 3. 按引导发送一条测试通知，确认右下角能弹出（专注助手 / 勿扰模式会拦截通知）。
 4. 手机 HarmoBridge →“电脑连接”→“添加电脑”，选择这台电脑，输入电脑上显示的配对码，核对校验码。
@@ -55,7 +60,11 @@ cd windows && dotnet test tests/HarmoBridge.Core.Tests
 
 通知内容只保存在内存里，不写磁盘；日志不记录通知标题和正文。
 
-卸载：退出程序后运行 `HarmoBridge.exe --uninstall`（清除通知注册和开机启动项），再删除 exe 和上面两个目录。
+## 卸载
+
+在“设置 > 应用 > 已安装的应用”里找到 HarmoBridge 点“卸载”，或在程序“设置 > 关于”里点“卸载 HarmoBridge”。
+卸载会退出程序、移除开机启动、通知注册、快捷方式和程序文件，并询问是否同时删除配对和设置数据。
+没有安装、直接运行 exe 的话：运行 `HarmoBridge.exe --uninstall`，再删除 exe。
 
 ## 代码结构
 

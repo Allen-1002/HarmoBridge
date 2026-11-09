@@ -37,6 +37,8 @@ public sealed class AppSettings
     public bool Paused { get; set; }
     public bool CopyOtp { get; set; } = true;
     public bool ShowContentInList { get; set; }
+    /// <summary>首次运行时选择了“不安装”（以免安装方式运行）</summary>
+    public bool InstallDeclined { get; set; }
     /// <summary>使用方式："software"（纯软件）或 "esp32"（使用 ESP32 通话模块）</summary>
     public string UseMode { get; set; } = "software";
     public double SettingsUpdatedAt { get; set; }

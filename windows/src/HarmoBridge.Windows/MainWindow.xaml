@@ -442,7 +442,14 @@
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock Text="关于" FontWeight="SemiBold" />
-                                <TextBlock x:Name="VersionText" Style="{StaticResource Hint}" Margin="0,4,0,8" />
+                                <TextBlock x:Name="VersionText" Style="{StaticResource Hint}" Margin="0,4,0,4" />
+                                <TextBlock Text="{Binding InstallText, Mode=OneTime}" Style="{StaticResource Hint}" Margin="0,0,0,8" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <Button Content="安装到这台电脑" Click="OnInstall" Margin="0,0,8,0"
+                                            Visibility="{Binding IsPortable, Mode=OneTime, Converter={StaticResource BoolToVis}}" />
+                                    <Button Content="卸载 HarmoBridge" Click="OnUninstall"
+                                            Visibility="{Binding IsInstalled, Mode=OneTime, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="重新运行首次引导" Click="OnRestartOnboarding" Margin="0,0,8,0" />
                                     <Button Content="项目主页" Click="OnHomepage" />

@@ -340,6 +340,12 @@ public sealed class AppModel : ObservableObject
         }
     }
 
+    public bool IsInstalled => Installer.IsRunningInstalled;
+    public bool IsPortable => !Installer.IsRunningInstalled;
+    public string InstallText => Installer.IsRunningInstalled
+        ? $"已安装到 {Installer.InstallDir}，可以在“设置 > 应用 > 已安装的应用”中卸载。"
+        : "当前以免安装（绿色版）方式运行，没有快捷方式，也不会出现在“已安装的应用”里。";
+
     public bool Onboarded
     {
         get => _settings.Onboarded;

@@ -209,4 +209,28 @@ public partial class MainWindow : Window
     }
 
     private void OnResetKeywords(object sender, RoutedEventArgs e) => _model.ResetKeywords();
+
+    // ---------------- 安装 / 卸载 ----------------
+
+    private void OnInstall(object sender, RoutedEventArgs e)
+    {
+        // 先退出自己（释放单实例锁），再启动安装好的那份
+        try
+        {
+            Installer.Install();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"安装失败：{ex.Message}", "安装 HarmoBridge", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        MessageBox.Show(this, "已安装，并创建了开始菜单和桌面快捷方式。接下来会从安装位置重新打开 HarmoBridge。", "安装 HarmoBridge",
+            MessageBoxButton.OK, MessageBoxImage.Information);
+        ((App)Application.Current).RestartFrom(Installer.InstalledExe);
+    }
+
+    private void OnUninstall(object sender, RoutedEventArgs e)
+    {
+        ((App)Application.Current).Uninstall();
+    }
 }
