@@ -72,6 +72,8 @@ final class AppModel: ObservableObject {
     private var server: BridgeServer!
     private var connectionDevice: [ObjectIdentifier: String] = [:]
     private var pinTimer: Timer?
+    private var repairNeeded = false
+    private var lastOutdatedNotice: Date?
 
     init() {
         let stored = UserDefaults.standard.integer(forKey: "port")
@@ -86,6 +88,7 @@ final class AppModel: ObservableObject {
         let macId = Self.macId()
         store = PairingStore(macId: macId)
         let macName = Host.current().localizedName ?? "Mac"
+        repairNeeded = Self.migratePairingSchema(store: store)
         server = BridgeServer { [store, window] in
             SessionMachine(store: store, window: window, macId: macId, macName: macName)
         }
@@ -113,60 +116,30 @@ final class AppModel: ObservableObject {
             refreshNotificationStatus()
         }
         if let p = store.loadProblem { log(p) }
-        store.onLegacyImported = { [weak self] name in
-            DispatchQueue.main.async {
-                self?.log("已把“\(name)”的配对密钥从钥匙串移到本机加密文件")
-                self?.pairedDevices = self?.store.devices() ?? []
-            }
+        if repairNeeded {
+            // 自动更新重启后（或手动安装后）第一次启动 1.1.0：说明为什么要重新配对
+            DispatchQueue.main.async { [weak self] in self?.showRepairNotice() }
         }
-        // 1.0.2 及之前的配对密钥在钥匙串里：启动完成后一次性移到加密文件
-        DispatchQueue.main.async { [weak self] in self?.migrateLegacyKeychain() }
     }
 
-    /// 把旧版保存在钥匙串里的配对密钥一次性移到本机加密文件。
-    /// 能静默读取的直接移；需要 macOS 授权的先弹说明，再读取。读取失败的留在钥匙串，下次启动再试。
-    func migrateLegacyKeychain() {
-        let legacy = LegacyKeychain.devices()
-        guard !legacy.isEmpty else { return }
-        let known = Set(store.devices().map(\.id))
-        for d in legacy where known.contains(d.id) {
-            let st = LegacyKeychain.delete(d.id)
-            log("删除钥匙串里已迁移的“\(d.name)”：\(st)")
-        }
-        let pending = legacy.filter { !known.contains($0.id) }
-        guard !pending.isEmpty else { return }
+    /// 1.1.0 起配对协议为 v2（CPace），旧配对一律作废。只在第一次启动时清除一次。
+    static let pairingSchema = 2
+    static let repairNoticeText = "安全升级：配对方式已更新，请在电脑和手机上重新配对"
 
-        var moved: [(id: String, name: String, key: Data)] = []
-        var needUI: [PairingStore.Device] = []
-        for d in pending {
-            if let data = LegacyKeychain.read(d.id, allowUI: false).data {
-                moved.append((d.id, d.name, data))
-            } else {
-                needUI.append(d)
-            }
-        }
-        if !needUI.isEmpty {
-            log("需要 macOS 授权才能读取 \(needUI.count) 台手机的旧配对密钥，先显示说明")
-            showFrontAlert(
-                title: "NotiBridge 要把配对密钥移到本机加密文件",
-                text: "以前每台手机的配对密钥保存在钥匙串里，每次更新后 macOS 都会重新询问。现在要把它们移到本机加密文件，macOS 会为每台已配对的手机最后询问一次（共 \(needUI.count) 次），请输入 Mac 登录密码并点“始终允许”或“允许”。移完以后不会再问。")
-            for d in needUI {
-                let r = LegacyKeychain.read(d.id, allowUI: true)
-                if let data = r.data {
-                    moved.append((d.id, d.name, data))
-                } else {
-                    log("没能读取“\(d.name)”的旧配对密钥（\(r.status)），保留在钥匙串，下次启动再试")
-                }
-            }
-        }
-        guard !moved.isEmpty else { return }
-        if store.importLegacy(moved) {
-            for m in moved { LegacyKeychain.delete(m.id) }
-            log("已把 \(moved.count) 台手机的配对密钥从钥匙串移到本机加密文件")
-        } else {
-            log("写入配对文件失败，旧密钥保留在钥匙串")
-        }
-        pairedDevices = store.devices()
+    /// 清除旧版（协议 v1）配对。返回是否需要提示用户重新配对（以前用过、或有过配对）。
+    private static func migratePairingSchema(store: PairingStore) -> Bool {
+        let d = UserDefaults.standard
+        guard d.integer(forKey: "pairingSchema") < pairingSchema else { return false }
+        let hadPairings = store.removePairingFile() > 0
+        d.set(pairingSchema, forKey: "pairingSchema")
+        return hadPairings || d.bool(forKey: "onboarded")
+    }
+
+    private func showRepairNotice() {
+        log(Self.repairNoticeText)
+        showFrontAlert(
+            title: Self.repairNoticeText,
+            text: "NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下了配对过程也无法离线猜出配对码，并加了双向防重放。旧的配对已失效并已清除。\n\n请在这台电脑上点“配对新手机”，再在每台手机上（也要更新到 1.1.0）重新配对一次。")
     }
 
     /// 菜单栏应用（accessory）弹出的对话框容易被当前窗口挡住：激活应用、提到浮动层级并强制置前
@@ -531,6 +504,8 @@ final class AppModel: ObservableObject {
             }
         case let .output(out, conn):
             handleOutput(out, conn: conn)
+        case let .rejected(ip, reason):
+            log("拒绝来自 \(ip) 的连接：\(reason)")
         }
     }
 
@@ -540,6 +515,12 @@ final class AppModel: ObservableObject {
             break
         case let .log(text):
             log(text)
+        case .peerOutdated:
+            // 旧版手机（1.0.x）连不上新协议：提示一次（每小时最多一次）
+            if lastOutdatedNotice.map({ Date().timeIntervalSince($0) > 3600 }) ?? true {
+                lastOutdatedNotice = Date()
+                notifier.showLocal(title: "有旧版手机尝试连接", body: "对方版本过旧，请把电脑和手机都更新到 1.1.0，然后重新配对。")
+            }
         case let .pairingStarted(sas):
             pairingSas = sas
             log("手机发起配对，请核对两端校验码：\(sas)")

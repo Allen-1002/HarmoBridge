@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// 自动更新用到的纯逻辑：版本号比较、SHA256SUMS.txt 解析、GitHub Release JSON 解析。与 UI 无关，可单元测试。
@@ -70,6 +71,22 @@ public enum UpdateCore {
     /// 各平台安装包文件名（与 Release 资源命名一致）
     public static func macAssetName(version: String) -> String { "NotiBridge-\(version)-macOS.dmg" }
     public static let sumsAssetName = "SHA256SUMS.txt"
+    public static let sumsSignatureAssetName = "SHA256SUMS.txt.sig"
+
+    /// 发布签名公钥（Ed25519，32 字节原始格式，Base64）。私钥只在发布者电脑上：
+    /// ~/.config/notibridge/release-signing-ed25519.pem，由 scripts/sign_release.sh 使用。
+    /// 与 Windows UpdateCore.cs、Android UpdateCore.kt 中的值必须相同。
+    public static let releasePublicKeyBase64 = "+wkZaT1HzXMHhcMF6xz67byo2x0iNeXMoL4PSO1ApQo="
+
+    /// 校验 SHA256SUMS.txt 的 Ed25519 签名（.sig 文件内容为 Base64 的 64 字节签名，允许末尾换行）
+    public static func verifySumsSignature(sums: Data, signatureFile: Data,
+                                           publicKeyBase64: String = releasePublicKeyBase64) -> Bool {
+        let text = String(decoding: signatureFile, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sig = Data(base64Encoded: text), sig.count == 64,
+              let raw = Data(base64Encoded: publicKeyBase64), raw.count == 32,
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: raw) else { return false }
+        return key.isValidSignature(sig, for: sums)
+    }
 
     public struct Asset: Decodable, Equatable {
         public let name: String
@@ -116,20 +133,28 @@ public enum UpdateCore {
         try JSONDecoder().decode(Release.self, from: data)
     }
 
-    /// 优先取“## 更新内容”一节；去掉表格行和 Markdown 符号
+    /// 摘要 = 第一段的重点提示（例如“安全更新，必须重新配对”）+“## 更新内容”一节；去掉表格行和 Markdown 符号
     public static func notesSnippet(_ body: String, maxChars: Int = 400) -> String {
-        var lines = body.components(separatedBy: .newlines)
-        if let start = lines.firstIndex(where: { $0.hasPrefix("#") && $0.contains("更新内容") }) {
-            let rest = lines[(start + 1)...]
+        let all = body.components(separatedBy: .newlines)
+        var lines = all
+        // 正文第一行（标题之前、不是表格）总是放在最前面，确保下载前就能看到
+        let headline = all.map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix("|") && !$0.hasPrefix("---") }
+        if let start = all.firstIndex(where: { $0.hasPrefix("#") && $0.contains("更新内容") }) {
+            let rest = all[(start + 1)...]
             let end = rest.firstIndex(where: { $0.hasPrefix("## ") }) ?? rest.endIndex
             lines = Array(rest[..<end])
+            if let headline, !lines.contains(where: { $0.trimmingCharacters(in: .whitespaces) == headline }) {
+                lines.insert(headline, at: 0)
+            }
         }
         let cleaned = lines
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("|") }
             .map { l -> String in
                 var s = l
-                while s.hasPrefix("#") { s.removeFirst() }
+                while s.hasPrefix("#") || s.hasPrefix(">") { s.removeFirst() }
+                s = s.trimmingCharacters(in: .whitespaces)
                 if s.hasPrefix("- ") || s.hasPrefix("* ") { s = "• " + s.dropFirst(2) }
                 return s.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
                     .trimmingCharacters(in: .whitespaces)

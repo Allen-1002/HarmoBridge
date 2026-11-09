@@ -8,6 +8,7 @@ import NotiBridgeCore
 ///
 /// 1.0.3 之前保存在登录钥匙串。自签名应用没有团队 ID，钥匙串只能按每次构建都会变的 cdhash
 /// 记录授权，导致每次更新后 macOS 都要为每台手机重新询问。改用文件后不再访问钥匙串。
+/// 1.1.0 起协议 v1 的配对全部作废（升级时删除一次，见 AppModel.migratePairingSchema），也不再迁移钥匙串里的旧密钥。
 /// 文件用绑定本机的密钥加密（见 PairingFile），复制到别的电脑无法解密；
 /// 但它不能防止以同一用户身份运行的其他程序读取，安全性依赖文件权限和 macOS 的用户隔离。
 final class PairingStore: PairedKeyStore {
@@ -22,8 +23,6 @@ final class PairingStore: PairedKeyStore {
     private let lock = NSLock()
     /// 读取过程中的提示（例如文件损坏），供日志显示
     private(set) var loadProblem: String?
-    /// 旧版钥匙串里的密钥被迁移进文件时回调（在调用 key(for:) 的线程上）
-    var onLegacyImported: ((String) -> Void)?
 
     static var directory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -73,14 +72,8 @@ final class PairingStore: PairedKeyStore {
 
     func key(for deviceId: String) -> SymmetricKey? {
         lock.lock(); defer { lock.unlock() }
-        if let r = records.first(where: { $0.id == deviceId }) { return SymmetricKey(data: r.key) }
-        // 还没迁移的旧版钥匙串密钥：读出来并移进文件，避免手机被当成“未配对”而删除配对
-        guard let legacy = LegacyKeychain.devices().first(where: { $0.id == deviceId }),
-              let data = LegacyKeychain.read(deviceId, allowUI: true).data else { return nil }
-        records.append(.init(id: deviceId, name: legacy.name, key: data, pairedAt: Date()))
-        if persistLocked() { LegacyKeychain.delete(deviceId) }
-        onLegacyImported?(legacy.name)
-        return SymmetricKey(data: data)
+        // 1.1.0 起不再读取旧版钥匙串里的密钥：协议 v1 的配对已全部作废
+        return records.first(where: { $0.id == deviceId }).map { SymmetricKey(data: $0.key) }
     }
 
     func save(deviceId: String, name: String, key: SymmetricKey) {
@@ -94,7 +87,6 @@ final class PairingStore: PairedKeyStore {
         lock.lock(); defer { lock.unlock() }
         records.removeAll { $0.id == deviceId }
         persistLocked()
-        LegacyKeychain.delete(deviceId)
     }
 
     // MARK: - 其他
@@ -104,13 +96,14 @@ final class PairingStore: PairedKeyStore {
         return records.map { Device(id: $0.id, name: $0.name) }
     }
 
-    /// 导入旧版钥匙串读出的密钥（已存在的跳过），写入并校验成功返回 true
-    func importLegacy(_ items: [(id: String, name: String, key: Data)]) -> Bool {
+    /// 1.1.0 升级：只删除配对文件（不访问钥匙串，避免弹授权框）。返回删除前的配对数。
+    @discardableResult
+    func removePairingFile() -> Int {
         lock.lock(); defer { lock.unlock() }
-        for item in items where !records.contains(where: { $0.id == item.id }) {
-            records.append(.init(id: item.id, name: item.name, key: item.key, pairedAt: Date()))
-        }
-        return persistLocked()
+        let count = records.count
+        records = []
+        try? FileManager.default.removeItem(at: url)
+        return count
     }
 
     /// 删除配对文件和旧版钥匙串里的所有密钥。返回删除前的配对数。

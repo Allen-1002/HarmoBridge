@@ -47,6 +47,6 @@ final class UpdateCoreTests: XCTestCase {
         let r = try UpdateCore.decodeRelease(Data(json.utf8))
         XCTAssertEqual(r.version, "1.3.0")
         XCTAssertEqual(r.asset(named: UpdateCore.macAssetName(version: r.version))?.size, 123)
-        XCTAssertEqual(r.notesSnippet(), "• 自动更新\n• 版本统一")
+        XCTAssertEqual(r.notesSnippet(), "简介\n• 自动更新\n• 版本统一")
     }
 }

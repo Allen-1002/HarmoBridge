@@ -3,6 +3,7 @@ import AVFoundation
 import CoreBluetooth
 import Foundation
 import Network
+import NotiBridgeCore
 import Security
 import ServiceManagement
 import UserNotifications

@@ -3,6 +3,8 @@ import Foundation
 /// 外层帧（明文 JSON）。字段按类型可选，见 docs/protocol.md。
 public struct Envelope: Codable, Equatable {
     public var t: String
+    /// 协议版本（v2 起必带 2）
+    public var v: Int?
     public var deviceId: String?
     public var deviceName: String?
     public var macId: String?
@@ -13,11 +15,14 @@ public struct Envelope: Codable, Equatable {
     public var nonce: String?
     public var box: String?
     public var code: String?
+    /// v2 配对确认码（HMAC，Base64）
+    public var confirm: String?
 
-    public init(t: String, deviceId: String? = nil, deviceName: String? = nil, macId: String? = nil,
+    public init(t: String, v: Int? = nil, deviceId: String? = nil, deviceName: String? = nil, macId: String? = nil,
                 macName: String? = nil, platform: String? = nil, pub: String? = nil, nonce: String? = nil,
-                box: String? = nil, code: String? = nil) {
+                box: String? = nil, code: String? = nil, confirm: String? = nil) {
         self.t = t
+        self.v = v
         self.deviceId = deviceId
         self.deviceName = deviceName
         self.macId = macId
@@ -27,6 +32,7 @@ public struct Envelope: Codable, Equatable {
         self.nonce = nonce
         self.box = box
         self.code = code
+        self.confirm = confirm
     }
 
     public func json() -> String {
@@ -45,6 +51,8 @@ public struct Inner: Codable, Equatable {
     public var kind: String
     public var sid: String
     public var seq: Int
+    /// v2：电脑→手机消息的电脑侧递增序号（手机据此防重放）
+    public var cseq: Int?
     public var id: String?
     public var bundleName: String?
     public var appName: String?
@@ -61,13 +69,14 @@ public struct Inner: Codable, Equatable {
     public var copyOtp: Bool?
     public var updatedAt: Double?
 
-    public init(kind: String, sid: String, seq: Int, id: String? = nil, bundleName: String? = nil,
+    public init(kind: String, sid: String, seq: Int, cseq: Int? = nil, id: String? = nil, bundleName: String? = nil,
                 appName: String? = nil, title: String? = nil, text: String? = nil, time: Double? = nil,
                 test: Bool? = nil, ids: [String]? = nil, result: String? = nil, code: String? = nil,
                 paused: Bool? = nil, blockSensitive: Bool? = nil, copyOtp: Bool? = nil, updatedAt: Double? = nil) {
         self.kind = kind
         self.sid = sid
         self.seq = seq
+        self.cseq = cseq
         self.id = id
         self.bundleName = bundleName
         self.appName = appName

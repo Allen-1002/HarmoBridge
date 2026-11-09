@@ -5,7 +5,7 @@ import NotiBridgeCore
 
 /// 自动更新：从 GitHub Releases 检查新版本，下载 dmg，校验 SHA256 与签名，替换 /Applications 里的 NotiBridge.app 后重新打开。
 ///
-/// 流程：检查 releases/latest → 下载 SHA256SUMS.txt 和 dmg → 校验哈希 → hdiutil 挂载 → 复制出 .app → 卸载
+/// 流程：检查 releases/latest → 下载 SHA256SUMS.txt、SHA256SUMS.txt.sig 和 dmg → 校验 Ed25519 签名 → 校验哈希 → hdiutil 挂载 → 复制出 .app → 卸载
 /// → codesign --verify、核对包名和版本 → 写一个小脚本：等本进程退出，替换旧 .app，去掉隔离属性，再打开新版。
 @MainActor
 final class Updater: ObservableObject {
@@ -228,6 +228,16 @@ final class Updater: ObservableObject {
             log("下载 \(sumsAsset.browserDownloadURL.absoluteString)")
             let (sumsData, sumsResp) = try await session.data(from: sumsAsset.browserDownloadURL)
             guard (sumsResp as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateError("下载校验值失败") }
+            // 1.1.0 起：先验证发布者的 Ed25519 签名，再信任校验值
+            guard let sigAsset = release.asset(named: UpdateCore.sumsSignatureAssetName) else {
+                throw UpdateError("Release 中没有签名文件 \(UpdateCore.sumsSignatureAssetName)，无法确认来源，已取消")
+            }
+            let (sigData, sigResp) = try await session.data(from: sigAsset.browserDownloadURL)
+            guard (sigResp as? HTTPURLResponse)?.statusCode == 200 else { throw UpdateError("下载签名失败") }
+            guard UpdateCore.verifySumsSignature(sums: sumsData, signatureFile: sigData) else {
+                throw UpdateError("发布签名校验失败：校验值不是由 NotiBridge 发布者签名的，已取消")
+            }
+            log("发布签名校验通过")
             let sums = UpdateCore.parseSha256Sums(String(decoding: sumsData, as: UTF8.self))
             guard let expected = sums[dmgName] else { throw UpdateError("SHA256SUMS.txt 中没有 \(dmgName)，已取消") }
 
