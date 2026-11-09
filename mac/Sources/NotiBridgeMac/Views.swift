@@ -711,7 +711,7 @@ struct RecordsView: View {
 
 struct DevicesView: View {
     @EnvironmentObject var model: AppModel
-    @State private var renaming: KeychainStore.Device?
+    @State private var renaming: PairingStore.Device?
     @State private var newName = ""
 
     var body: some View {
@@ -791,7 +791,7 @@ struct SettingsView: View {
     @State private var confirmReset = false
     @State private var confirmUninstall = false
 
-    private static let deletedItems = "将删除：钥匙串中所有已配对手机的密钥、这台 Mac 的设备标识、全部设置（过滤规则、同步开关、使用方式等）、应用图标缓存、登录时启动项，以及通知中心里的 NotiBridge 通知。所有手机都需要重新配对。"
+    private static let deletedItems = "将删除：所有已配对手机的密钥（本机配对文件，以及旧版留在钥匙串里的）、这台 Mac 的设备标识、全部设置（过滤规则、同步开关、使用方式等）、应用图标缓存、登录时启动项，以及通知中心里的 NotiBridge 通知。所有手机都需要重新配对。"
 
     var body: some View {
         Form {

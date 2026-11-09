@@ -157,7 +157,6 @@ struct OnboardingView: View {
             Button {
                 perms.requestNotifications()
                 perms.requestLocalNetwork()
-                perms.checkKeychain()
                 perms.requestBluetooth()
             } label: {
                 Label("一键申请全部必需和推荐权限", systemImage: "checkmark.shield")
@@ -177,12 +176,6 @@ struct OnboardingView: View {
                 status: perms.localNetwork,
                 action: ("允许", { perms.requestLocalNetwork() }),
                 settings: { perms.openSystemSettings("com.apple.preference.security?Privacy_LocalNetwork") })
-            PermissionRow(
-                icon: "key.horizontal.fill", color: .orange, title: "钥匙串", tag: "必需",
-                reason: "把与手机配对生成的密钥安全地保存在系统钥匙串中。如果系统询问，请选择“始终允许”。",
-                status: perms.keychain,
-                action: ("检查", { perms.checkKeychain() }),
-                settings: nil)
             PermissionRow(
                 icon: "dot.radiowaves.left.and.right", color: .indigo, title: "蓝牙", tag: "推荐",
                 reason: "仅鸿蒙手机需要：鸿蒙系统要求读取通知时绑定一台已配对的蓝牙设备，这台 Mac 可以作为这台设备。安卓手机不需要。",

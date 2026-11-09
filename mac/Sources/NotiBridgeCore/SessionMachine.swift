@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// 已配对设备的密钥存储（App 中由钥匙串实现，测试中用内存实现）。
+/// 已配对设备的密钥存储（App 中由本机加密文件 PairingStore 实现，测试中用内存实现）。
 public protocol PairedKeyStore: AnyObject {
     func key(for deviceId: String) -> SymmetricKey?
     func save(deviceId: String, name: String, key: SymmetricKey)

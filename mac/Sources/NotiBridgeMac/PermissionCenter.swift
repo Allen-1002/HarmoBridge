@@ -27,7 +27,6 @@ final class PermissionCenter: NSObject, ObservableObject, CBCentralManagerDelega
     @Published var notifications: Status = .unknown
     @Published var localNetwork: Status = .notDetermined
     @Published var bluetooth: Status = .unknown
-    @Published var keychain: Status = .notDetermined
     @Published var loginItem: Status = .unknown
     @Published var microphone: Status = .unknown
 
@@ -106,26 +105,6 @@ final class PermissionCenter: NSObject, ObservableObject, CBCentralManagerDelega
         Task { @MainActor in self.refresh() }
     }
 
-    /// 写入并读回一条测试项：确认钥匙串可用（系统若弹窗，选“始终允许”）。
-    func checkKeychain() {
-        let service = "com.xsh.notibridge.mac.selftest"
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: "check",
-        ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = Data("ok".utf8)
-        let s1 = SecItemAdd(add as CFDictionary, nil)
-        var q = base
-        q[kSecReturnData as String] = true
-        var out: CFTypeRef?
-        let s2 = SecItemCopyMatching(q as CFDictionary, &out)
-        SecItemDelete(base as CFDictionary)
-        keychain = (s1 == errSecSuccess && s2 == errSecSuccess) ? .granted : .denied
-    }
-
     func requestMicrophone() {
         AVCaptureDevice.requestAccess(for: .audio) { _ in
             DispatchQueue.main.async { self.refresh() }
@@ -148,6 +127,6 @@ final class PermissionCenter: NSObject, ObservableObject, CBCentralManagerDelega
     }
 
     var requiredReady: Bool {
-        notifications == .granted && keychain == .granted && localNetwork != .denied
+        notifications == .granted && localNetwork != .denied
     }
 }

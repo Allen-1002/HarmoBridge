@@ -27,7 +27,7 @@ final class AppModel: ObservableObject {
 
     @Published var listening = "未启动"
     @Published var onlineDevices: [String: Date] = [:] // deviceId -> 最后活动时间
-    @Published var pairedDevices: [KeychainStore.Device] = []
+    @Published var pairedDevices: [PairingStore.Device] = []
     /// 用户在电脑上给手机起的名字（deviceId -> 名字），只保存在本机
     @Published var deviceAliases: [String: String] =
         UserDefaults.standard.dictionary(forKey: "deviceAliases") as? [String: String] ?? [:] {
@@ -65,7 +65,7 @@ final class AppModel: ObservableObject {
     private var updaterChanges: AnyCancellable?
 
     let port: UInt16
-    private let store = KeychainStore()
+    private let store: PairingStore
     private let window = PairingWindow()
     private let deduper = NotificationDeduper()
     private let notifier = Notifier()
@@ -84,6 +84,7 @@ final class AppModel: ObservableObject {
         }
         paused = UserDefaults.standard.bool(forKey: "paused")
         let macId = Self.macId()
+        store = PairingStore(macId: macId)
         let macName = Host.current().localizedName ?? "Mac"
         server = BridgeServer { [store, window] in
             SessionMachine(store: store, window: window, macId: macId, macName: macName)
@@ -110,29 +111,77 @@ final class AppModel: ObservableObject {
         // 首次使用由引导页统一申请权限；完成引导后启动时只确认通知权限
         if onboarded {
             refreshNotificationStatus()
-            // 等应用启动完成后再读钥匙串（可能弹出说明和系统授权框）
-            DispatchQueue.main.async { [weak self] in self?.prepareKeychainAccess() }
         }
+        if let p = store.loadProblem { log(p) }
+        store.onLegacyImported = { [weak self] name in
+            DispatchQueue.main.async {
+                self?.log("已把“\(name)”的配对密钥从钥匙串移到本机加密文件")
+                self?.pairedDevices = self?.store.devices() ?? []
+            }
+        }
+        // 1.0.2 及之前的配对密钥在钥匙串里：启动完成后一次性移到加密文件
+        DispatchQueue.main.async { [weak self] in self?.migrateLegacyKeychain() }
     }
 
-    /// 启动时一次性读出所有配对密钥，让 macOS 的钥匙串授权（如果需要）集中在启动时出现，
-    /// 而不是在手机连上、通知到达的那一刻突然弹出。需要授权时先用一个提示说明原因。
-    func prepareKeychainAccess() {
-        let defaults = UserDefaults.standard
-        let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
-        let last = defaults.string(forKey: "lastLaunchedVersion")
-        defer { defaults.set(current, forKey: "lastLaunchedVersion") }
-        guard !store.devices().isEmpty else { return }
-        if store.needsAuthorization() {
-            log("钥匙串需要授权（上次运行版本 \(last ?? "无")，当前 \(current)），启动时一次性询问")
-            NSApp.activate(ignoringOtherApps: true)
-            let alert = NSAlert()
-            alert.messageText = "接下来 macOS 可能会询问钥匙串权限"
-            alert.informativeText = "NotiBridge 把每台手机的配对密钥保存在你的钥匙串里。更新后 macOS 可能会为每台已配对的手机询问一次，请输入 Mac 登录密码并点“始终允许”，之后就不会再问。"
-            alert.addButton(withTitle: "好的")
-            alert.runModal()
+    /// 把旧版保存在钥匙串里的配对密钥一次性移到本机加密文件。
+    /// 能静默读取的直接移；需要 macOS 授权的先弹说明，再读取。读取失败的留在钥匙串，下次启动再试。
+    func migrateLegacyKeychain() {
+        let legacy = LegacyKeychain.devices()
+        guard !legacy.isEmpty else { return }
+        let known = Set(store.devices().map(\.id))
+        for d in legacy where known.contains(d.id) {
+            let st = LegacyKeychain.delete(d.id)
+            log("删除钥匙串里已迁移的“\(d.name)”：\(st)")
         }
-        store.preloadAll()
+        let pending = legacy.filter { !known.contains($0.id) }
+        guard !pending.isEmpty else { return }
+
+        var moved: [(id: String, name: String, key: Data)] = []
+        var needUI: [PairingStore.Device] = []
+        for d in pending {
+            if let data = LegacyKeychain.read(d.id, allowUI: false).data {
+                moved.append((d.id, d.name, data))
+            } else {
+                needUI.append(d)
+            }
+        }
+        if !needUI.isEmpty {
+            log("需要 macOS 授权才能读取 \(needUI.count) 台手机的旧配对密钥，先显示说明")
+            showFrontAlert(
+                title: "NotiBridge 要把配对密钥移到本机加密文件",
+                text: "以前每台手机的配对密钥保存在钥匙串里，每次更新后 macOS 都会重新询问。现在要把它们移到本机加密文件，macOS 会为每台已配对的手机最后询问一次（共 \(needUI.count) 次），请输入 Mac 登录密码并点“始终允许”或“允许”。移完以后不会再问。")
+            for d in needUI {
+                let r = LegacyKeychain.read(d.id, allowUI: true)
+                if let data = r.data {
+                    moved.append((d.id, d.name, data))
+                } else {
+                    log("没能读取“\(d.name)”的旧配对密钥（\(r.status)），保留在钥匙串，下次启动再试")
+                }
+            }
+        }
+        guard !moved.isEmpty else { return }
+        if store.importLegacy(moved) {
+            for m in moved { LegacyKeychain.delete(m.id) }
+            log("已把 \(moved.count) 台手机的配对密钥从钥匙串移到本机加密文件")
+        } else {
+            log("写入配对文件失败，旧密钥保留在钥匙串")
+        }
+        pairedDevices = store.devices()
+    }
+
+    /// 菜单栏应用（accessory）弹出的对话框容易被当前窗口挡住：激活应用、提到浮动层级并强制置前
+    private func showFrontAlert(title: String, text: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "好的")
+        alert.layout()
+        alert.window.level = .floating
+        alert.window.center()
+        alert.window.orderFrontRegardless()
+        alert.window.makeKey()
+        alert.runModal()
     }
 
     /// 首次启动引导是否已完成
@@ -142,7 +191,6 @@ final class AppModel: ObservableObject {
         onboarded = true
         UserDefaults.standard.set(true, forKey: "onboarded")
         refreshNotificationStatus()
-        prepareKeychainAccess()
         log("首次启动引导已完成")
     }
 
@@ -208,7 +256,7 @@ final class AppModel: ObservableObject {
         pinTimer?.invalidate()
     }
 
-    func unpair(_ d: KeychainStore.Device) {
+    func unpair(_ d: PairingStore.Device) {
         // 手机在线：先通知手机同步删除；离线：手机下次连接时会收到 unknown_device，再自行删除这台电脑
         let notified = server.unpair(deviceId: d.id)
         store.remove(deviceId: d.id)
@@ -229,7 +277,7 @@ final class AppModel: ObservableObject {
     }
 
     /// 给手机改名；名字为空或与手机原名相同则恢复原名。
-    func rename(_ d: KeychainStore.Device, to newName: String) {
+    func rename(_ d: PairingStore.Device, to newName: String) {
         let n = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         if n.isEmpty || n == d.name {
             deviceAliases.removeValue(forKey: d.id)
@@ -366,7 +414,7 @@ final class AppModel: ObservableObject {
         return urls
     }
 
-    /// 清除所有数据：断开手机、停止服务，删除钥匙串配对密钥、偏好设置、缓存、登录项和已送达的通知。
+    /// 清除所有数据：断开手机、停止服务，删除配对文件和旧版钥匙串密钥、偏好设置、缓存、登录项和已送达的通知。
     func resetAllData() {
         log("正在清除所有数据…")
         cancelPairing()
@@ -401,7 +449,7 @@ final class AppModel: ObservableObject {
             try? fm.removeItem(at: url)
         }
         records.removeAll()
-        NSLog("NotiBridge: 已清除所有数据（钥匙串密钥 \(removedKeys) 个）")
+        NSLog("NotiBridge: 已清除所有数据（配对密钥 \(removedKeys) 个）")
     }
 
     /// 清除所有数据后重新启动应用，回到首次启动引导。
