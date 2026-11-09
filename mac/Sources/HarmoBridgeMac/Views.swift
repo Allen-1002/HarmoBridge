@@ -5,23 +5,79 @@ import SwiftUI
 
 // MARK: - Liquid Glass（macOS 26+），旧系统回退为系统材质
 
+@available(macOS 26.0, *)
+private func hbMakeGlass(tint: Color?, interactive: Bool) -> Glass {
+    var glass = Glass.regular
+    if let tint { glass = glass.tint(tint) }
+    if interactive { glass = glass.interactive() }
+    return glass
+}
+
 extension View {
+    /// 玻璃背景。tint 为染色玻璃（旧系统回退为同色渐变）。
     @ViewBuilder
-    func hbGlass<S: Shape>(_ shape: S, interactive: Bool = false) -> some View {
+    func hbGlass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
+            self.glassEffect(hbMakeGlass(tint: tint, interactive: interactive), in: shape)
+        } else if let tint {
+            self.background(tint.gradient, in: shape)
         } else {
             self.background(.regularMaterial, in: shape)
         }
     }
 
     @ViewBuilder
-    func hbGlassButton() -> some View {
+    func hbGlassButton(prominent: Bool = false) -> some View {
         if #available(macOS 26.0, *) {
-            self.buttonStyle(.glass)
+            if prominent { self.buttonStyle(.glassProminent) } else { self.buttonStyle(.glass) }
         } else {
-            self.buttonStyle(.bordered)
+            if prominent { self.buttonStyle(.borderedProminent) } else { self.buttonStyle(.bordered) }
         }
+    }
+
+    /// 主窗口各页面：去掉列表/表单自带的不透明底色，透出柔和的彩色背景，玻璃卡片才有层次
+    func hbPageBackground() -> some View {
+        self.scrollContentBackground(.hidden)
+            .background(AmbientBackground())
+    }
+}
+
+/// 让相邻的玻璃元素互相融合（macOS 26），旧系统直接显示内容
+struct GlassGroup<Content: View>: View {
+    var spacing: CGFloat = 12
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
+    }
+}
+
+/// 主窗口背景：窗口底色上叠一层很淡的彩色网格渐变
+struct AmbientBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            if #available(macOS 15.0, *) {
+                MeshGradient(
+                    width: 3, height: 3,
+                    points: [[0, 0], [0.5, 0], [1, 0],
+                             [0, 0.5], [0.6, 0.45], [1, 0.5],
+                             [0, 1], [0.5, 1], [1, 1]],
+                    colors: [.indigo, .blue, .cyan,
+                             .purple, .clear, .teal,
+                             .blue, .mint, .indigo])
+                    .opacity(scheme == .dark ? 0.28 : 0.16)
+            } else {
+                Theme.heroGradient.opacity(scheme == .dark ? 0.22 : 0.12)
+            }
+        }
+        .ignoresSafeArea()
     }
 }
 
@@ -56,6 +112,7 @@ struct AppAvatar: View {
                     .font(.system(size: size * 0.45, weight: .bold))
                     .foregroundStyle(.white)
             )
+            .shadow(color: Theme.avatarColor(key).opacity(0.25), radius: 3, y: 1)
     }
 }
 
@@ -77,9 +134,9 @@ struct ResultBadge: View {
         Text(text)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 7)
             .padding(.vertical, 2)
-            .background(color.opacity(0.12), in: Capsule())
+            .background(color.opacity(0.14), in: Capsule())
     }
 }
 
@@ -88,20 +145,21 @@ struct StatusDot: View {
     let color: Color
 
     var body: some View {
-        Circle().fill(color).frame(width: 8, height: 8)
-            .overlay(Circle().stroke(color.opacity(0.3), lineWidth: 3))
+        Circle().fill(color).frame(width: 7, height: 7)
+            .shadow(color: color.opacity(0.8), radius: 3)
     }
 }
 
 /// 卡片容器
 struct CardBox<Content: View>: View {
+    var padding: CGFloat = 16
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) { content }
-            .padding(14)
+            .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .hbGlass(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .hbGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -110,6 +168,13 @@ extension AppModel {
         if paused { return .orange }
         if isPhoneOnline { return .green }
         return pairedDevices.isEmpty ? .gray : .blue
+    }
+
+    /// 主状态卡片的玻璃染色
+    var heroTint: Color {
+        if pairedDevices.isEmpty { return Color.gray.opacity(0.55) }
+        if paused { return Color.orange.opacity(0.75) }
+        return Color(red: 0.16, green: 0.42, blue: 0.95).opacity(0.8)
     }
 
     var headline: String {
@@ -122,109 +187,140 @@ extension AppModel {
 
 struct StatusMenu: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
+    var openMain: () -> Void = {}
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // 头部
+        GlassGroup(spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
+                header
+                hero
+                CallControls()
+                otpCard
+                if let pin = model.pairingPin {
+                    PairingPanel(pin: pin, sas: model.pairingSas)
+                }
+                recent
+                footer
+            }
+            .padding(16)
+        }
+        .frame(width: 360)
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 40, height: 40)
+                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("HarmoBridge").font(.system(size: 15, weight: .semibold))
+                HStack(spacing: 6) {
+                    StatusDot(color: model.statusColor)
+                    Text(model.phoneStatusText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer()
+            Button(action: openMain) {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 30, height: 30)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .hbGlass(Circle(), interactive: true)
+            .help("打开主窗口")
+        }
+    }
+
+    private var hero: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.headline).font(.system(size: 17, weight: .bold))
+                Text("今日显示 \(model.todayShown) 条 · 验证码 \(model.todayOtp) 个")
+                    .font(.caption).opacity(0.85)
+            }
+            .foregroundStyle(.white)
+            Spacer()
+            Toggle("", isOn: Binding(get: { !model.paused }, set: { model.paused = !$0 }))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .tint(.white.opacity(0.4))
+                .disabled(model.pairedDevices.isEmpty)
+        }
+        .padding(16)
+        .hbGlass(RoundedRectangle(cornerRadius: 20, style: .continuous), tint: model.heroTint)
+    }
+
+    @ViewBuilder
+    private var otpCard: some View {
+        if let otp = model.lastOtp, Date().timeIntervalSince(otp.at) < 120 {
             HStack(spacing: 10) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 34, height: 34)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("HarmoBridge").font(.headline)
-                    HStack(spacing: 6) {
-                        StatusDot(color: model.statusColor)
-                        Text(model.phoneStatusText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                Image(systemName: "key.fill").foregroundStyle(.blue)
+                    .frame(width: 30, height: 30)
+                    .background(Color.blue.opacity(0.14), in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(otp.code).font(.system(size: 17, weight: .bold, design: .monospaced))
+                    Text("来自 \(otp.app) · 已复制").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button {
-                    openMain()
-                } label: {
-                    Image(systemName: "macwindow")
-                }
-                .buttonStyle(.borderless)
-                .help("打开主窗口")
+                Button("再次复制") { model.copyAgain(otp.code) }.controlSize(.small).hbGlassButton()
             }
+            .padding(12)
+            .hbGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
 
-            // 同步开关
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.headline).font(.system(size: 15, weight: .semibold))
-                    Text("今日显示 \(model.todayShown) 条 · 验证码 \(model.todayOtp) 个")
-                        .font(.caption).foregroundStyle(.white.opacity(0.85))
-                }
-                .foregroundStyle(.white)
-                Spacer()
-                Toggle("", isOn: Binding(get: { !model.paused }, set: { model.paused = !$0 }))
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .tint(.white.opacity(0.35))
-                    .disabled(model.pairedDevices.isEmpty)
-            }
-            .padding(14)
-            .background(Theme.heroGradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            CallControls()
-
-            if let otp = model.lastOtp, Date().timeIntervalSince(otp.at) < 120 {
-                HStack {
-                    Image(systemName: "key.fill").foregroundStyle(.blue)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(otp.code).font(.system(size: 17, weight: .bold, design: .monospaced))
-                        Text("来自 \(otp.app) · 已复制").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("再次复制") { model.copyAgain(otp.code) }.controlSize(.small).hbGlassButton()
-                }
-                .padding(10)
-                .hbGlass(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-
-            if let pin = model.pairingPin {
-                PairingPanel(pin: pin, sas: model.pairingSas)
-            }
-
-            // 最近通知
-            VStack(alignment: .leading, spacing: 6) {
-                Text("最近通知").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+    private var recent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("最近通知").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.leading, 4)
+            VStack(spacing: 0) {
                 if model.records.isEmpty {
-                    Text("暂无通知").font(.callout).foregroundStyle(.tertiary).padding(.vertical, 8)
+                    Text("暂无通知").font(.callout).foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity).padding(.vertical, 18)
                 }
                 ForEach(model.records.prefix(5)) { r in
                     HStack(spacing: 10) {
-                        AppAvatar(name: r.notification.appName, key: r.notification.bundleName, size: 26)
+                        AppAvatar(name: r.notification.appName, key: r.notification.bundleName, size: 30)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(r.notification.appName).font(.callout).lineLimit(1)
+                            Text(r.notification.appName).font(.callout.weight(.medium)).lineLimit(1)
                             if model.showContentInList {
                                 Text(r.notification.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
-                        Spacer()
-                        ResultBadge(result: r.result)
-                        Text(r.at.formatted(date: .omitted, time: .shortened))
-                            .font(.caption2).foregroundStyle(.tertiary)
+                        Spacer(minLength: 6)
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text(r.at.formatted(date: .omitted, time: .shortened))
+                                .font(.caption2).foregroundStyle(.tertiary)
+                            ResultBadge(result: r.result)
+                        }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
             }
-
-            Divider()
-            HStack {
-                Button(model.pairingPin == nil ? "配对新手机" : "取消配对") {
-                    model.pairingPin == nil ? model.openPairing() : model.cancelPairing()
-                }
-                Spacer()
-                Button("退出") { NSApp.terminate(nil) }
-            }
-            .buttonStyle(.borderless)
-            .font(.callout)
+            .padding(.vertical, 4)
+            .hbGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .padding(14)
-        .frame(width: 340)
     }
 
-    private func openMain() {
-        openWindow(id: "main")
-        NSApp.activate(ignoringOtherApps: true)
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Button {
+                model.pairingPin == nil ? model.openPairing() : model.cancelPairing()
+            } label: {
+                Label(model.pairingPin == nil ? "配对新手机" : "取消配对",
+                      systemImage: model.pairingPin == nil ? "plus" : "xmark")
+                    .frame(maxWidth: .infinity)
+            }
+            .hbGlassButton()
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Label("退出", systemImage: "power").frame(maxWidth: .infinity)
+            }
+            .hbGlassButton()
+        }
+        .controlSize(.large)
     }
 }
 
@@ -246,8 +342,8 @@ struct PairingPanel: View {
                 Text("2 分钟内有效").font(.caption2).foregroundStyle(.secondary)
             }
         }
-        .padding(12)
-        .hbGlass(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(14)
+        .hbGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -262,16 +358,20 @@ struct CallControls: View {
                 Image(systemName: "phone.arrow.down.left").foregroundStyle(.green)
                 Text("来电 \(n)").bold()
                 Spacer()
-                Button("接听") { model.answerCall() }
-                Button("拒接") { model.hangUpCall() }
+                Button("接听") { model.answerCall() }.hbGlassButton(prominent: true).tint(.green)
+                Button("拒接") { model.hangUpCall() }.hbGlassButton(prominent: true).tint(.red)
             }
+            .padding(12)
+            .hbGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
         case let .active(n), let .dialing(n):
             HStack {
                 Image(systemName: "phone.fill").foregroundStyle(.green)
                 Text(model.callState.label)
                 Spacer()
-                Button("挂断") { model.hangUpCall() }
+                Button("挂断") { model.hangUpCall() }.hbGlassButton(prominent: true).tint(.red)
             }
+            .padding(12)
+            .hbGlass(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .help(n)
         default:
             EmptyView()
@@ -315,6 +415,7 @@ struct MainWindow: View {
         } else {
             OnboardingView()
                 .frame(minWidth: 760, minHeight: 600)
+                .background(AmbientBackground())
         }
     }
 
@@ -323,7 +424,7 @@ struct MainWindow: View {
             List(SidebarItem.allCases, selection: $selection) { item in
                 Label(item.rawValue, systemImage: item.icon).tag(item)
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } detail: {
             Group {
                 switch selection ?? .overview {
@@ -338,7 +439,7 @@ struct MainWindow: View {
             }
             .navigationTitle((selection ?? .overview).rawValue)
         }
-        .frame(minWidth: 760, minHeight: 520)
+        .frame(minWidth: 780, minHeight: 540)
     }
 }
 
@@ -348,67 +449,104 @@ struct OverviewView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // 主状态卡片
-                HStack(alignment: .center, spacing: 16) {
-                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 64, height: 64)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(model.headline).font(.system(size: 24, weight: .bold))
-                        Text("手机：\(model.phoneStatusText)").foregroundStyle(.white.opacity(0.85))
-                        Text(model.listening).font(.caption).foregroundStyle(.white.opacity(0.7))
-                    }
-                    .foregroundStyle(.white)
-                    Spacer()
-                    Toggle("同步", isOn: Binding(get: { !model.paused }, set: { model.paused = !$0 }))
-                        .toggleStyle(.switch)
-                        .tint(.white.opacity(0.35))
-                        .foregroundStyle(.white)
-                        .disabled(model.pairedDevices.isEmpty)
-                }
-                .padding(20)
-                .background(Theme.heroGradient, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            GlassGroup(spacing: 16) {
+                VStack(alignment: .leading, spacing: 20) {
+                    hero
 
-                // 统计
-                HStack(spacing: 12) {
-                    StatCard(value: model.todayShown, label: "今日已显示", icon: "bell.fill", color: .blue)
-                    StatCard(value: model.todayOtp, label: "验证码已复制", icon: "key.fill", color: .teal)
-                    StatCard(value: model.todayFiltered, label: "已过滤", icon: "line.3.horizontal.decrease", color: .orange)
-                    StatCard(value: model.pairedDevices.count, label: "已配对手机", icon: "iphone", color: .purple)
-                }
+                    // 统计
+                    HStack(spacing: 12) {
+                        StatCard(value: model.todayShown, label: "今日已显示", icon: "bell.fill", color: .blue)
+                        StatCard(value: model.todayOtp, label: "验证码已复制", icon: "key.fill", color: .teal)
+                        StatCard(value: model.todayFiltered, label: "已过滤", icon: "line.3.horizontal.decrease", color: .orange)
+                        StatCard(value: model.pairedDevices.count, label: "已配对手机", icon: "iphone", color: .purple)
+                    }
 
-                // 快捷操作
-                Text("快捷操作").font(.headline)
-                HStack(spacing: 12) {
-                    QuickAction(title: "配对新手机", icon: "plus.circle.fill") {
-                        model.openPairing()
-                        selection = .devices
+                    // 快捷操作
+                    SectionTitle("快捷操作")
+                    HStack(spacing: 12) {
+                        QuickAction(title: "配对新手机", icon: "plus.circle.fill", color: .blue) {
+                            model.openPairing()
+                            selection = .devices
+                        }
+                        QuickAction(title: "打开蓝牙设置", icon: "dot.radiowaves.left.and.right", color: .indigo) {
+                            model.openBluetoothSettings()
+                        }
+                        QuickAction(title: "测试 Mac 通知", icon: "bell.and.waves.left.and.right", color: .pink) {
+                            model.sendLocalTestNotification()
+                        }
                     }
-                    QuickAction(title: "打开蓝牙设置", icon: "dot.radiowaves.left.and.right") {
-                        model.openBluetoothSettings()
-                    }
-                    QuickAction(title: "测试 Mac 通知", icon: "bell.and.waves.left.and.right") {
-                        model.sendLocalTestNotification()
-                    }
-                }
 
-                // 最近通知
-                HStack {
-                    Text("最近通知").font(.headline)
-                    Spacer()
-                    Button("查看全部") { selection = .records }.buttonStyle(.link)
+                    // 最近通知
+                    HStack {
+                        SectionTitle("最近通知")
+                        Spacer()
+                        Button("查看全部") { selection = .records }.hbGlassButton().controlSize(.small)
+                    }
+                    CardBox {
+                        if model.records.isEmpty {
+                            Text("还没有收到手机通知").foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity).padding(.vertical, 20)
+                        }
+                        ForEach(model.records.prefix(6)) { r in
+                            RecordRow(record: r, showContent: model.showContentInList)
+                            if r.id != model.records.prefix(6).last?.id { Divider().opacity(0.5) }
+                        }
+                    }
                 }
-                CardBox {
-                    if model.records.isEmpty {
-                        Text("还没有收到手机通知").foregroundStyle(.secondary)
-                    }
-                    ForEach(model.records.prefix(6)) { r in
-                        RecordRow(record: r, showContent: model.showContentInList)
-                        if r.id != model.records.prefix(6).last?.id { Divider() }
-                    }
+                .padding(28)
+                .frame(maxWidth: 980)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .hbPageBackground()
+    }
+
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 18) {
+            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 72, height: 72)
+                .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.headline).font(.system(size: 26, weight: .bold))
+                HStack(spacing: 8) {
+                    HeroChip(icon: "iphone", text: model.phoneStatusText)
+                    HeroChip(icon: "network", text: model.listening)
                 }
             }
-            .padding(24)
+            .foregroundStyle(.white)
+            Spacer()
+            Toggle("同步", isOn: Binding(get: { !model.paused }, set: { model.paused = !$0 }))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.large)
+                .tint(.white.opacity(0.4))
+                .disabled(model.pairedDevices.isEmpty)
         }
+        .padding(24)
+        .hbGlass(RoundedRectangle(cornerRadius: 26, style: .continuous), tint: model.heroTint)
+    }
+}
+
+/// 主状态卡片里的小标签
+struct HeroChip: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: icon)
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(.white.opacity(0.18), in: Capsule())
+    }
+}
+
+struct SectionTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).font(.title3.weight(.semibold))
     }
 }
 
@@ -419,35 +557,44 @@ struct StatCard: View {
     let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: icon).foregroundStyle(color).font(.title3)
-            Text("\(value)").font(.system(size: 26, weight: .bold, design: .rounded))
-            Text(label).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(color.gradient, in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(value)").font(.system(size: 28, weight: .bold, design: .rounded))
+                    .contentTransition(.numericText())
+                Text(label).font(.caption).foregroundStyle(.secondary)
+            }
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .hbGlass(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .hbGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
 struct QuickAction: View {
     let title: String
     let icon: String
+    var color: Color = .accentColor
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack {
-                Image(systemName: icon).font(.title3).foregroundStyle(Color.accentColor)
-                Text(title)
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.title3).foregroundStyle(color)
+                Text(title).font(.callout.weight(.medium))
                 Spacer()
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }
-            .padding(12)
+            .padding(14)
             .frame(maxWidth: .infinity)
-            .hbGlass(RoundedRectangle(cornerRadius: 12, style: .continuous), interactive: true)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .hbGlass(RoundedRectangle(cornerRadius: 18, style: .continuous), interactive: true)
     }
 }
 
@@ -504,6 +651,7 @@ struct RecordsView: View {
                                        description: Text("手机收到通知后会显示在这里，记录只保存在内存中"))
             }
         }
+        .hbPageBackground()
         .searchable(text: $query, prompt: "搜索应用")
         .toolbar {
             Toggle(isOn: $model.showContentInList) {
@@ -563,6 +711,7 @@ struct DevicesView: View {
             }
         }
         .formStyle(.grouped)
+        .hbPageBackground()
     }
 }
 
@@ -606,6 +755,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .hbPageBackground()
     }
 }
 
@@ -645,6 +795,7 @@ struct FilterTab: View {
             }
         }
         .formStyle(.grouped)
+        .hbPageBackground()
     }
 
     private func add(to path: WritableKeyPath<SyncFilter, Set<String>>) {
@@ -680,6 +831,7 @@ struct LogTab: View {
                 Text(l.text).font(.caption).textSelection(.enabled)
             }
         }
+        .hbPageBackground()
     }
 }
 
@@ -723,6 +875,7 @@ struct PhoneTab: View {
             }
         }
         .formStyle(.grouped)
+        .hbPageBackground()
         .onAppear { if model.btDevices.isEmpty { model.refreshBTDevices() } }
     }
 }
