@@ -1,75 +1,80 @@
 using System.Security.Cryptography;
 using System.Text;
-using Org.BouncyCastle.Crypto.Agreement;
-using Org.BouncyCastle.Crypto.Parameters;
-using Org.BouncyCastle.Security;
 
 namespace NotiBridge.Core;
 
 /// <summary>
-/// 与 docs/protocol.md 中的“密码学约定”逐项对应，和 Mac 端 BridgeCrypto.swift、手机端 Crypto.ets 必须保持一致。
+/// 与 docs/protocol.md 中的“密码学约定”（协议 v2）逐项对应，和 Mac BridgeCrypto.swift、Android、鸿蒙端保持一致。
 /// </summary>
 public static class BridgeCrypto
 {
-    public static readonly byte[] Aad = Encoding.UTF8.GetBytes("HB1");
-    public const string PairInfoPrefix = "HarmoBridge-pair-v1|";
+    public const int ProtocolVersion = 2;
     private const int IvLength = 12;
     private const int TagLength = 16;
 
-    public sealed class X25519KeyPair
+    /// <summary>消息方向：AAD 不同，把一方的消息反射回去也解不开。</summary>
+    public enum Direction { ToComputer, ToPhone }
+
+    private static byte[] Aad(Direction d) => Encoding.UTF8.GetBytes(d == Direction.ToComputer ? "NB2|p2c" : "NB2|c2p");
+
+    private static readonly byte[] TranscriptLabel = Encoding.UTF8.GetBytes("NotiBridge-pair-v2");
+    private static readonly byte[] InfoPairKey = Encoding.UTF8.GetBytes("NotiBridge-v2 pair key");
+    private static readonly byte[] InfoConfirmPhone = Encoding.UTF8.GetBytes("NotiBridge-v2 confirm phone");
+    private static readonly byte[] InfoConfirmComputer = Encoding.UTF8.GetBytes("NotiBridge-v2 confirm computer");
+
+    private static byte[] U(string s) => Encoding.UTF8.GetBytes(s);
+
+    /// <summary>配对双方都知道的公开信息（字符串按线路上的原样）。</summary>
+    public sealed record PairingContext(string DeviceId, string DeviceName, string PhonePlatform, string MacId,
+        string MacName, string MacPlatform, byte[] PhoneNonce, byte[] MacNonce)
     {
-        internal X25519PrivateKeyParameters Private { get; }
-        public byte[] PublicRaw { get; }
+        public byte[] Sid => [.. PhoneNonce, .. MacNonce];
+        public byte[] Ci => Cpace.LvCat(U(DeviceId), U(MacId));
+        public byte[] Generator(string pin) => Cpace.Generator(U(pin), Ci, Sid);
 
-        internal X25519KeyPair(X25519PrivateKeyParameters priv)
-        {
-            Private = priv;
-            PublicRaw = priv.GeneratePublicKey().GetEncoded();
-        }
-
-        public static X25519KeyPair Generate() => new(new X25519PrivateKeyParameters(new SecureRandom()));
-
-        /// <summary>仅测试用：由 32 字节私钥构造。</summary>
-        public static X25519KeyPair FromPrivate(byte[] raw) => new(new X25519PrivateKeyParameters(raw, 0));
+        public byte[] Transcript(byte[] ya, byte[] yb) => Cpace.LvCat(TranscriptLabel, Sid, U(DeviceId), U(DeviceName),
+            U(PhonePlatform), U(MacId), U(MacName), U(MacPlatform), ya, yb);
     }
 
-    public static byte[] Salt(byte[] phonePub, byte[] macPub) => SHA256.HashData([.. phonePub, .. macPub]);
+    public sealed record PairingKeys(byte[] PairKey, byte[] TranscriptHash, byte[] ConfirmPhone, byte[] ConfirmComputer,
+        string Sas);
 
-    /// <summary>6 位十六进制校验码，两端显示给用户比对。</summary>
-    public static string Sas(byte[] phonePub, byte[] macPub) =>
-        Convert.ToHexString(Salt(phonePub, macPub), 0, 3);
-
-    public static byte[] SharedSecret(X25519KeyPair mine, byte[] peerPub)
+    public static PairingKeys DerivePairingKeys(byte[] k, PairingContext ctx, byte[] ya, byte[] yb)
     {
-        if (peerPub.Length != 32) throw new CryptographicException("bad public key");
-        var agreement = new X25519Agreement();
-        agreement.Init(mine.Private);
-        var shared = new byte[agreement.AgreementSize];
-        agreement.CalculateAgreement(new X25519PublicKeyParameters(peerPub, 0), shared, 0);
-        if (shared.All(b => b == 0)) throw new CryptographicException("low-order public key");
-        return shared;
+        var th = SHA256.HashData(ctx.Transcript(ya, yb));
+        byte[] Hkdf(byte[] info) => HKDF.DeriveKey(HashAlgorithmName.SHA256, k, 32, th, info);
+        var kcP = Hkdf(InfoConfirmPhone);
+        var kcC = Hkdf(InfoConfirmComputer);
+        return new PairingKeys(Hkdf(InfoPairKey), th,
+            HMACSHA256.HashData(kcP, (byte[])[.. th, .. U("phone")]),
+            HMACSHA256.HashData(kcC, (byte[])[.. th, .. U("computer")]),
+            Sas(th));
     }
 
-    public static byte[] DerivePairKey(X25519KeyPair mine, byte[] peerPub, byte[] phonePub, byte[] macPub, string pin)
+    /// <summary>8 位数字校验码：th 前 5 字节大端整数 mod 10^8，显示为 "1234 5678"。</summary>
+    public static string Sas(byte[] th)
     {
-        var shared = SharedSecret(mine, peerPub);
-        return HKDF.DeriveKey(HashAlgorithmName.SHA256, shared, 32, Salt(phonePub, macPub),
-            Encoding.UTF8.GetBytes(PairInfoPrefix + pin));
+        ulong n = 0;
+        for (var i = 0; i < 5; i++) n = (n << 8) | th[i];
+        var s = (n % 100_000_000).ToString("D8");
+        return s[..4] + " " + s[4..];
     }
+
+    public static bool ConstantTimeEqual(byte[] a, byte[] b) => CryptographicOperations.FixedTimeEquals(a, b);
 
     /// <summary>AES-256-GCM，输出 Base64(iv ‖ ciphertext ‖ tag16)。</summary>
-    public static string Seal(byte[] key, string plaintext)
+    public static string Seal(byte[] key, string plaintext, Direction dir)
     {
         var plain = Encoding.UTF8.GetBytes(plaintext);
         var output = new byte[IvLength + plain.Length + TagLength];
         var iv = output.AsSpan(0, IvLength);
         RandomNumberGenerator.Fill(iv);
         using var gcm = new AesGcm(key, TagLength);
-        gcm.Encrypt(iv, plain, output.AsSpan(IvLength, plain.Length), output.AsSpan(IvLength + plain.Length), Aad);
+        gcm.Encrypt(iv, plain, output.AsSpan(IvLength, plain.Length), output.AsSpan(IvLength + plain.Length), Aad(dir));
         return Convert.ToBase64String(output);
     }
 
-    public static string Open(byte[] key, string b64)
+    public static string Open(byte[] key, string b64, Direction dir)
     {
         byte[] data;
         try { data = Convert.FromBase64String(b64); }
@@ -78,15 +83,15 @@ public static class BridgeCrypto
         var ctLen = data.Length - IvLength - TagLength;
         var plain = new byte[ctLen];
         using var gcm = new AesGcm(key, TagLength);
-        gcm.Decrypt(data.AsSpan(0, IvLength), data.AsSpan(IvLength, ctLen), data.AsSpan(IvLength + ctLen), plain, Aad);
+        gcm.Decrypt(data.AsSpan(0, IvLength), data.AsSpan(IvLength, ctLen), data.AsSpan(IvLength + ctLen), plain, Aad(dir));
         return Encoding.UTF8.GetString(plain);
     }
 
-    public static bool TryOpen(byte[] key, string? b64, out string plain)
+    public static bool TryOpen(byte[] key, string? b64, Direction dir, out string plain)
     {
         plain = "";
         if (b64 is null) return false;
-        try { plain = Open(key, b64); return true; }
+        try { plain = Open(key, b64, dir); return true; }
         catch (CryptographicException) { return false; }
     }
 

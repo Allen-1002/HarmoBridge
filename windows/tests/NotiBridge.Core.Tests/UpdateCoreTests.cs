@@ -63,6 +63,30 @@ public class UpdateCoreTests
         var r = UpdateCore.ParseRelease(json);
         Assert.Equal("1.3.0", r.Version);
         Assert.Equal(123, r.AssetNamed(UpdateCore.WindowsAssetName(r.Version))!.Size);
-        Assert.Equal("• 自动更新\n• 版本统一", r.NotesSnippet());
+        // 正文第一行（重点提示）总是放在摘要最前面
+        Assert.Equal("简介\n• 自动更新\n• 版本统一", r.NotesSnippet());
+    }
+
+    [Fact]
+    public void NotesSnippetSurfacesSecurityHeadlineFirst()
+    {
+        var body = "**安全更新：更新后所有手机都必须重新配对，电脑和手机都要是 1.1.0。**\n\n## 更新内容\n- 改用 CPace\n## 已知限制\n- x";
+        Assert.StartsWith("安全更新：更新后所有手机都必须重新配对", UpdateCore.NotesSnippet(body));
+    }
+
+    [Fact]
+    public void ReleaseSignatureVector()
+    {
+        var r = TestVectors.Load().GetProperty("releaseSignature");
+        var pk = Convert.ToBase64String(Convert.FromHexString(r.GetProperty("publicKey").GetString()!));
+        var msg = System.Text.Encoding.UTF8.GetBytes(r.GetProperty("message").GetString()!);
+        var sig = System.Text.Encoding.UTF8.GetBytes(r.GetProperty("signature").GetString()! + "\n");
+        Assert.True(UpdateCore.VerifySumsSignature(msg, sig, pk));
+        var tampered = (byte[])msg.Clone();
+        tampered[0] ^= 1;
+        Assert.False(UpdateCore.VerifySumsSignature(tampered, sig, pk));
+        Assert.False(UpdateCore.VerifySumsSignature(msg, sig), "内置发布公钥不能验证测试签名");
+        Assert.False(UpdateCore.VerifySumsSignature(msg, "garbage"u8.ToArray(), pk));
+        Assert.Equal(32, Convert.FromBase64String(UpdateCore.ReleasePublicKeyBase64).Length);
     }
 }

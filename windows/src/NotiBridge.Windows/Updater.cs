@@ -287,7 +287,15 @@ public sealed class Updater : ObservableObject
             // 1. 校验值
             Status = "正在下载校验值…";
             Log($"下载 {sumsAsset.BrowserDownloadUrl}");
-            var sums = UpdateCore.ParseSha256Sums(await http.GetStringAsync(sumsAsset.BrowserDownloadUrl));
+            var sumsBytes = await http.GetByteArrayAsync(sumsAsset.BrowserDownloadUrl);
+            // 1.1.0 起：先验证发布者的 Ed25519 签名，再信任校验值
+            var sigAsset = release.AssetNamed(UpdateCore.SumsSignatureAssetName)
+                           ?? throw new InvalidOperationException($"Release 中没有签名文件 {UpdateCore.SumsSignatureAssetName}，无法确认来源，已取消");
+            var sigBytes = await http.GetByteArrayAsync(sigAsset.BrowserDownloadUrl);
+            if (!UpdateCore.VerifySumsSignature(sumsBytes, sigBytes))
+                throw new InvalidOperationException("发布签名校验失败：校验值不是由 NotiBridge 发布者签名的，已取消");
+            Log("发布签名校验通过");
+            var sums = UpdateCore.ParseSha256Sums(System.Text.Encoding.UTF8.GetString(sumsBytes));
             if (!sums.TryGetValue(zipName, out var expected))
                 throw new InvalidOperationException($"SHA256SUMS.txt 中没有 {zipName}，已取消");
 

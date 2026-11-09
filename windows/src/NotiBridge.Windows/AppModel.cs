@@ -138,6 +138,7 @@ public sealed class AppModel : ObservableObject
         _mdns = new MdnsAdvertiser(s => Dispatch(() => Log(s)));
         var id = _settings.ComputerId;
         var name = ComputerName;
+        MigratePairingSchema();
         _server = new BridgeServer(() => new SessionMachine(_store, _window, id, name, "windows"));
         _server.OnEvent += e => Dispatch(() => Handle(e));
         _pinTimer.Tick += (_, _) => TickPairing();
@@ -149,6 +150,36 @@ public sealed class AppModel : ObservableObject
     {
         _server.Start(_settings.Port);
         Updater.Start(updatedTo);
+        if (HasRepairNotice)
+        {
+            Log(RepairNotice);
+            _notifier.ShowLocal(RepairNotice, "1.1.0 是安全更新，旧配对已清除。请在电脑上点“配对新手机”，并把手机也更新到 1.1.0 后重新配对。");
+        }
+    }
+
+    // ---------------- 1.1.0 安全升级 ----------------
+
+    public const int CurrentPairingSchema = 2;
+    public string RepairNotice => "安全升级：配对方式已更新，请在电脑和手机上重新配对";
+    public bool HasRepairNotice => _settings.RepairNoticePending;
+    private DateTimeOffset? _lastOutdatedNotice;
+
+    /// <summary>1.1.0 起配对协议为 v2（CPace），旧配对一律作废。只在第一次启动时清除一次。</summary>
+    private void MigratePairingSchema()
+    {
+        if (_settings.PairingSchema >= CurrentPairingSchema) return;
+        var old = _store.Devices();
+        foreach (var d in old) _store.Remove(d.Id);
+        _settings.PairingSchema = CurrentPairingSchema;
+        _settings.RepairNoticePending = old.Count > 0 || _settings.Onboarded;
+        _settings.Save();
+    }
+
+    public void DismissRepairNotice()
+    {
+        _settings.RepairNoticePending = false;
+        _settings.Save();
+        Raise(nameof(HasRepairNotice));
     }
 
     public void Shutdown()
@@ -569,6 +600,9 @@ public sealed class AppModel : ObservableObject
             case BridgeServer.Event.Output o:
                 HandleOutput(o.Value, o.Connection);
                 break;
+            case BridgeServer.Event.Rejected r:
+                Log($"拒绝来自 {r.Ip} 的连接：{r.Reason}");
+                break;
         }
     }
 
@@ -578,6 +612,14 @@ public sealed class AppModel : ObservableObject
         {
             case SessionOutput.Log l:
                 Log(l.Text);
+                break;
+            case SessionOutput.PeerOutdated:
+                // 旧版手机（1.0.x）连不上新协议：提示一次（每小时最多一次）
+                if (_lastOutdatedNotice is not { } last || DateTimeOffset.Now - last > TimeSpan.FromHours(1))
+                {
+                    _lastOutdatedNotice = DateTimeOffset.Now;
+                    _notifier.ShowLocal("有旧版手机尝试连接", "对方版本过旧，请把电脑和手机都更新到 1.1.0，然后重新配对。");
+                }
                 break;
             case SessionOutput.PairingStarted p:
                 PairingSas = p.Sas;

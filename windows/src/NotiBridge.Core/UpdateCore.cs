@@ -13,6 +13,33 @@ public static class UpdateCore
     public const string LatestReleaseUrl = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
     public const string UserAgent = "NotiBridge-Updater";
     public const string SumsAssetName = "SHA256SUMS.txt";
+    public const string SumsSignatureAssetName = "SHA256SUMS.txt.sig";
+
+    /// <summary>
+    /// 发布签名公钥（Ed25519，32 字节原始格式，Base64）。私钥只在发布者电脑上
+    /// （~/.config/notibridge/release-signing-ed25519.pem，scripts/sign_release.sh 使用）。
+    /// 与 Mac UpdateCore.swift、Android UpdateCore.kt 中的值必须相同。
+    /// </summary>
+    public const string ReleasePublicKeyBase64 = "+wkZaT1HzXMHhcMF6xz67byo2x0iNeXMoL4PSO1ApQo=";
+
+    /// <summary>校验 SHA256SUMS.txt 的 Ed25519 签名（.sig 内容为 Base64 的 64 字节签名，允许末尾换行）。</summary>
+    public static bool VerifySumsSignature(byte[] sums, byte[] signatureFile, string publicKeyBase64 = ReleasePublicKeyBase64)
+    {
+        try
+        {
+            var sig = Convert.FromBase64String(System.Text.Encoding.UTF8.GetString(signatureFile).Trim());
+            var pk = Convert.FromBase64String(publicKeyBase64);
+            if (sig.Length != 64 || pk.Length != 32) return false;
+            var verifier = new Org.BouncyCastle.Crypto.Signers.Ed25519Signer();
+            verifier.Init(false, new Org.BouncyCastle.Crypto.Parameters.Ed25519PublicKeyParameters(pk, 0));
+            verifier.BlockUpdate(sums, 0, sums.Length);
+            return verifier.VerifySignature(sig);
+        }
+        catch (Exception e) when (e is FormatException or ArgumentException)
+        {
+            return false;
+        }
+    }
 
     public static string WindowsAssetName(string version) => $"NotiBridge-{version}-Windows-x64.zip";
 
@@ -108,23 +135,28 @@ public static class UpdateCore
     public static Release ParseRelease(string json) =>
         JsonSerializer.Deserialize<Release>(json) ?? throw new FormatException("Release JSON 为空");
 
-    /// <summary>优先取“## 更新内容”一节，去掉表格行和 Markdown 符号。</summary>
+    /// <summary>摘要 = 正文第一行的重点提示（例如“安全更新，必须重新配对”）+“## 更新内容”一节；去掉表格行和 Markdown 符号。</summary>
     public static string NotesSnippet(string body, int maxChars = 400)
     {
-        var lines = body.Replace("\r", "").Split('\n').ToList();
-        var start = lines.FindIndex(l => l.StartsWith('#') && l.Contains("更新内容"));
+        var all = body.Replace("\r", "").Split('\n').ToList();
+        var lines = all;
+        // 正文第一行（标题之前、不是表格）总是放在最前面，确保下载前就能看到
+        var headline = all.Select(l => l.Trim())
+            .FirstOrDefault(l => l.Length > 0 && !l.StartsWith('#') && !l.StartsWith('|') && !l.StartsWith("---"));
+        var start = all.FindIndex(l => l.StartsWith('#') && l.Contains("更新内容"));
         if (start >= 0)
         {
-            var rest = lines.Skip(start + 1).ToList();
+            var rest = all.Skip(start + 1).ToList();
             var end = rest.FindIndex(l => l.StartsWith("## "));
             lines = end >= 0 ? rest.Take(end).ToList() : rest;
+            if (headline is not null && !lines.Any(l => l.Trim() == headline)) lines.Insert(0, headline);
         }
         var cleaned = string.Join("\n", lines
             .Select(l => l.Trim())
             .Where(l => l.Length > 0 && !l.StartsWith('|'))
             .Select(l =>
             {
-                var s = l.TrimStart('#');
+                var s = l.TrimStart('#', '>').Trim();
                 if (s.StartsWith("- ") || s.StartsWith("* ")) s = "• " + s[2..];
                 return s.Replace("**", "").Replace("`", "").Trim();
             }));

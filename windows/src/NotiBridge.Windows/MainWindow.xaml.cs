@@ -60,6 +60,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnDismissRepairNotice(object sender, RoutedEventArgs e) => _model.DismissRepairNotice();
+
     private void UpdatePairIdle() => PairIdle.Visibility = _model.IsPairing ? Visibility.Collapsed : Visibility.Visible;
 
     private void OnRecordsChanged(object? sender, NotifyCollectionChangedEventArgs? e)

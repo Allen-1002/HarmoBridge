@@ -6,7 +6,10 @@
     <RootNamespace>NotiBridge.Core</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <!-- 仅用于 X25519：.NET 自带的 ECDiffieHellman 不支持 Curve25519 -->
+    <!-- X25519 与 Ed25519：.NET 自带的 ECDiffieHellman / ECDsa 不支持 Curve25519 -->
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="NotiBridge.Core.Tests" />
   </ItemGroup>
 </Project>

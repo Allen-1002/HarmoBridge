@@ -18,6 +18,8 @@ internal static class Json
 public sealed record Envelope
 {
     public required string T { get; init; }
+    /// <summary>协议版本（v2 起必带 2）。</summary>
+    public int? V { get; init; }
     public string? DeviceId { get; init; }
     public string? DeviceName { get; init; }
     public string? MacId { get; init; }
@@ -28,6 +30,8 @@ public sealed record Envelope
     public string? Nonce { get; init; }
     public string? Box { get; init; }
     public string? Code { get; init; }
+    /// <summary>v2 配对确认码（HMAC，Base64）。</summary>
+    public string? Confirm { get; init; }
 
     public string ToJson() => JsonSerializer.Serialize(this, Json.Options);
 
@@ -44,6 +48,8 @@ public sealed record Inner
     public required string Kind { get; init; }
     public required string Sid { get; init; }
     public required int Seq { get; init; }
+    /// <summary>v2：电脑→手机消息的电脑侧递增序号（手机据此防重放）。</summary>
+    public int? Cseq { get; init; }
     public string? Id { get; init; }
     public string? BundleName { get; init; }
     public string? AppName { get; init; }

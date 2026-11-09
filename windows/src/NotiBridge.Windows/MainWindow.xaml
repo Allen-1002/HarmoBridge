@@ -206,6 +206,18 @@
                 <!-- 概览 -->
                 <ScrollViewer x:Name="Page0" VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="24,20,28,24">
+                        <!-- 1.1.0 安全升级：旧配对已清除，需要重新配对 -->
+                        <Border CornerRadius="10" Padding="16,12" Margin="0,0,0,14" Background="#FFF4E5" BorderBrush="#F59E0B"
+                                BorderThickness="1" Visibility="{Binding HasRepairNotice, Converter={StaticResource BoolToVis}}">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="知道了" Click="OnDismissRepairNotice" VerticalAlignment="Center" />
+                                <StackPanel Margin="0,0,12,0">
+                                    <TextBlock Text="{Binding RepairNotice}" FontWeight="SemiBold" Foreground="#92400E" TextWrapping="Wrap" />
+                                    <TextBlock Text="1.1.0 改用更安全的配对方式（CPace），旧配对已失效并已清除。请点“配对新手机”，并把每台手机也更新到 1.1.0 后重新配对。"
+                                               Foreground="#92400E" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
                         <Border CornerRadius="12" Padding="22" Margin="0,0,0,14" Background="{StaticResource HeroBrush}">
                             <Grid>
                                 <Grid.ColumnDefinitions>

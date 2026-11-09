@@ -20,16 +20,17 @@ public sealed class BridgeServer : IDisposable
         public sealed record Stopped(string Reason) : Event;
         public sealed record Output(SessionOutput Value, Guid Connection) : Event;
         public sealed record Disconnected(Guid Connection, string? DeviceId, bool WasAuthenticated) : Event;
+        /// <summary>新连接被限制策略拒绝（连接数、速率或封禁）。</summary>
+        public sealed record Rejected(string Ip, string Reason) : Event;
     }
 
     public const string ServiceType = "_notibridge._tcp";
     public const int DefaultPort = 47800;
-    private const int MaxMessageBytes = 256 * 1024;
-    private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(60); // 配对时要留出用户核对校验码的时间
 
-    private sealed class Session(Guid id, TcpClient tcp, WebSocket ws, SessionMachine machine)
+    private sealed class Session(Guid id, TcpClient tcp, WebSocket ws, SessionMachine machine, string ip)
     {
         public Guid Id { get; } = id;
+        public string Ip { get; } = ip;
         public TcpClient Tcp { get; } = tcp;
         public WebSocket Ws { get; } = ws;
         public SessionMachine Machine { get; } = machine;
@@ -40,12 +41,24 @@ public sealed class BridgeServer : IDisposable
 
     private readonly Func<SessionMachine> _makeMachine;
     private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
+    private readonly bool _loopbackOnly;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
 
     public event Action<Event>? OnEvent;
 
-    public BridgeServer(Func<SessionMachine> makeMachine) => _makeMachine = makeMachine;
+    /// <summary>防滥用策略（docs/protocol.md “电脑端连接限制”）。</summary>
+    public ConnectionGuard Guard { get; }
+
+    /// <param name="loopbackOnly">测试用：只监听 127.0.0.1。</param>
+    public BridgeServer(Func<SessionMachine> makeMachine, ConnectionGuard.Limits? limits = null, bool loopbackOnly = false)
+    {
+        _makeMachine = makeMachine;
+        _loopbackOnly = loopbackOnly;
+        Guard = new ConnectionGuard(limits);
+    }
+
+    public int ConnectionCount => _sessions.Count;
 
     public int Port { get; private set; }
 
@@ -56,7 +69,12 @@ public sealed class BridgeServer : IDisposable
         try
         {
             TcpListener l;
-            try
+            if (_loopbackOnly)
+            {
+                l = new TcpListener(IPAddress.Loopback, port);
+                l.Start();
+            }
+            else try
             {
                 l = new TcpListener(IPAddress.IPv6Any, port);
                 l.Server.DualMode = true; // 同时接受 IPv4 / IPv6
@@ -158,32 +176,67 @@ public sealed class BridgeServer : IDisposable
                 OnEvent?.Invoke(new Event.Stopped($"监听失败：{e.Message}"));
                 break;
             }
-            _ = HandleClient(tcp, ct);
+            string ip;
+            try { ip = IpOf(tcp); }
+            catch (Exception) { tcp.Dispose(); continue; }
+            var verdict = Guard.Admit(ip);
+            if (verdict != ConnectionGuard.Verdict.Allow)
+            {
+                tcp.Dispose();
+                OnEvent?.Invoke(new Event.Rejected(ip, verdict switch
+                {
+                    ConnectionGuard.Verdict.TooManyConnections => "连接数已达上限",
+                    ConnectionGuard.Verdict.RateLimited => "新连接过于频繁",
+                    _ => "多次认证失败，暂时封禁",
+                }));
+                continue;
+            }
+            _ = HandleClient(tcp, ip, ct);
         }
     }
 
-    private async Task HandleClient(TcpClient tcp, CancellationToken serverCt)
+    internal static string IpOf(TcpClient tcp)
+    {
+        if (tcp.Client.RemoteEndPoint is not IPEndPoint ep) return "?";
+        var a = ep.Address.IsIPv4MappedToIPv6 ? ep.Address.MapToIPv4() : ep.Address;
+        var s = a.ToString();
+        var pct = s.IndexOf('%'); // 去掉 IPv6 的接口后缀
+        return pct >= 0 ? s[..pct] : s;
+    }
+
+    private async Task HandleClient(TcpClient tcp, string ip, CancellationToken serverCt)
     {
         tcp.NoDelay = true;
         var stream = tcp.GetStream();
+        var started = DateTimeOffset.UtcNow;
         WebSocket ws;
         try
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(serverCt);
-            handshakeCts.CancelAfter(TimeSpan.FromSeconds(10));
+            handshakeCts.CancelAfter(Guard.Config.HandshakeTimeout);
             ws = await AcceptWebSocket(stream, handshakeCts.Token);
         }
         catch (Exception)
         {
             tcp.Dispose();
+            Guard.ConnectionClosed();
             return;
         }
-        var s = new Session(Guid.NewGuid(), tcp, ws, _makeMachine());
+        var s = new Session(Guid.NewGuid(), tcp, ws, _makeMachine(), ip);
         _sessions[s.Id] = s;
-        // 未在限定时间内完成认证/配对则断开，防止空连接占用
-        _ = Task.Delay(AuthTimeout, s.Cts.Token).ContinueWith(t =>
+        // 握手/认证超时：10 秒内必须完成认证；配对中放宽，给用户核对校验码
+        var remaining = Guard.Config.HandshakeTimeout - (DateTimeOffset.UtcNow - started);
+        _ = Task.Delay(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, s.Cts.Token).ContinueWith(async t =>
         {
-            if (!t.IsCanceled && !s.Machine.IsAuthenticated) Abort(s);
+            if (t.IsCanceled || s.Machine.IsAuthenticated) return;
+            if (!s.Machine.IsPairing)
+            {
+                Abort(s);
+                return;
+            }
+            try { await Task.Delay(Guard.Config.PairingTimeout - Guard.Config.HandshakeTimeout, s.Cts.Token); }
+            catch (OperationCanceledException) { return; }
+            if (!s.Machine.IsAuthenticated) Abort(s);
         }, TaskScheduler.Default);
         try
         {
@@ -209,7 +262,13 @@ public sealed class BridgeServer : IDisposable
                 catch (Exception) { return; }
                 if (r.MessageType == WebSocketMessageType.Close) return;
                 ms.Write(buffer, 0, r.Count);
-                if (ms.Length > MaxMessageBytes) return;
+                if (ms.Length > Guard.MaxFrame(s.Machine.IsAuthenticated))
+                {
+                    // 认证前不接受大帧
+                    Guard.RecordFailure(s.Ip);
+                    OnEvent?.Invoke(new Event.Output(new SessionOutput.Log($"帧过大（>{ms.Length} 字节），已断开"), s.Id));
+                    return;
+                }
             } while (!r.EndOfMessage);
             if (r.MessageType != WebSocketMessageType.Text) continue;
             var text = Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
@@ -222,9 +281,13 @@ public sealed class BridgeServer : IDisposable
                     case SessionOutput.Send send:
                         await SendRaw(s, send.Frame);
                         break;
-                    case SessionOutput.Close:
+                    case SessionOutput.Close c:
+                        if (SessionMachine.FailureReasons.Contains(c.Reason)) Guard.RecordFailure(s.Ip);
                         // 让最后一帧先发出去再断开
                         _ = Task.Delay(300).ContinueWith(_ => Abort(s), TaskScheduler.Default);
+                        break;
+                    case SessionOutput.Authenticated:
+                        Guard.RecordSuccess(s.Ip);
                         break;
                 }
                 OnEvent?.Invoke(new Event.Output(o, s.Id));
@@ -261,7 +324,10 @@ public sealed class BridgeServer : IDisposable
     private void Drop(Session s)
     {
         if (!_sessions.TryRemove(s.Id, out _)) return;
+        Guard.ConnectionClosed();
         Abort(s);
+        s.Cts.Dispose();
+        s.SendLock.Dispose();
         OnEvent?.Invoke(new Event.Disconnected(s.Id, s.Machine.DeviceId, s.Machine.IsAuthenticated));
     }
 

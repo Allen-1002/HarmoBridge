@@ -69,27 +69,36 @@ public abstract record SessionOutput
     public sealed record Otp(OtpCode Code, int Seq) : SessionOutput;
     public sealed record Settings(SharedSettings Value, int Seq) : SessionOutput;
     public sealed record Ping(int Seq) : SessionOutput;
-    /// <summary>v1.2：手机取消了与这台电脑的配对，密钥已从存储中删除。</summary>
+    /// <summary>手机取消了与这台电脑的配对，密钥已从存储中删除。</summary>
     public sealed record Unpaired(string DeviceId) : SessionOutput;
+    /// <summary>旧版（协议 v1）手机尝试连接，已回 upgrade_required。</summary>
+    public sealed record PeerOutdated : SessionOutput;
     public sealed record Log(string Text) : SessionOutput;
 }
 
 /// <summary>
-/// 单条 WebSocket 连接的协议状态机，与 Mac 端 SessionMachine.swift 行为一致。
+/// 单条 WebSocket 连接的协议状态机（协议 v2），与 Mac 端 SessionMachine.swift 行为一致。
 /// 与网络层解耦：输入一帧文本，输出要执行的动作。非线程安全，由调用方串行调用。
 /// </summary>
 public sealed class SessionMachine(IPairedKeyStore store, PairingWindow window, string computerId, string computerName,
     string platform = "windows")
 {
-    private enum Phase { AwaitingFirst, Pairing, AwaitingAuth, Authenticated, Closed }
+    /// <summary>会让电脑端对来源 IP 计一次失败（退避/封禁）的关闭原因。</summary>
+    public static readonly IReadOnlySet<string> FailureReasons = new HashSet<string>
+    {
+        "bad_frame", "unexpected", "bad_pin", "bad_point", "bad_pair_req", "bad_hello", "auth_failed", "bad_msg", "replay",
+    };
+
+    private enum Phase { AwaitingFirst, PairingAwaitKey, PairingAwaitConfirm, AwaitingAuth, Authenticated, Closed }
 
     private Phase _phase = Phase.AwaitingFirst;
     // 配对
-    private BridgeCrypto.X25519KeyPair? _priv;
-    private byte[] _phonePub = [];
-    private byte[] _macPub = [];
+    private BridgeCrypto.PairingContext? _ctx;
+    private string _pin = "";
+    private byte[] _yb = [];
+    private byte[] _ybPub = [];
+    private BridgeCrypto.PairingKeys? _keys;
     private string _name = "";
-    private string _sas = "";
     // 会话
     private byte[]? _key;
     private string _phoneNonce = "";
@@ -97,8 +106,14 @@ public sealed class SessionMachine(IPairedKeyStore store, PairingWindow window, 
     private int _lastSeq;
     private int _outSeq;
 
+    /// <summary>测试用：固定电脑端 CPace 标量和 nonce。</summary>
+    internal byte[]? FixedScalar { get; set; }
+    internal byte[]? FixedNonce { get; set; }
+
     public string? DeviceId { get; private set; }
     public bool IsAuthenticated => _phase == Phase.Authenticated;
+    /// <summary>配对进行中（已收到合法的 pair_req）：服务端据此放宽超时。</summary>
+    public bool IsPairing => _phase is Phase.PairingAwaitKey or Phase.PairingAwaitConfirm;
 
     public IReadOnlyList<SessionOutput> Handle(string text, DateTimeOffset? now = null)
     {
@@ -108,46 +123,73 @@ public sealed class SessionMachine(IPairedKeyStore store, PairingWindow window, 
         switch (_phase)
         {
             case Phase.AwaitingFirst:
-                return env.T switch
+                if (env.T is "pair_req" or "hello")
                 {
-                    "pair_req" => StartPairing(env, t),
-                    "hello" => StartAuth(env),
-                    "info" => Info(),
-                    _ => Fail("unexpected", $"首帧类型非法：{env.T}"),
-                };
-            case Phase.Pairing:
+                    if (env.V != BridgeCrypto.ProtocolVersion)
+                    {
+                        _phase = Phase.Closed;
+                        return [new SessionOutput.Log("旧版手机（协议 v1）尝试连接，请把手机更新到 1.1.0"),
+                            new SessionOutput.PeerOutdated(),
+                            new SessionOutput.Send(new Envelope { T = "error", Code = "upgrade_required" }.ToJson()),
+                            new SessionOutput.Close("upgrade_required")];
+                    }
+                    return env.T == "pair_req" ? StartPairing(env, t) : StartAuth(env);
+                }
+                return env.T == "info" ? Info() : Fail("unexpected", $"首帧类型非法：{env.T}");
+            case Phase.PairingAwaitKey:
             {
-                if (env.T != "pair_confirm" || env.Box is null) return Fail("unexpected", $"配对阶段收到非法帧：{env.T}");
-                var pin = window.ActivePin(t);
-                if (pin is null) return Fail("pairing_closed", "配对窗口已关闭或 PIN 已过期");
-                byte[] key;
-                try { key = BridgeCrypto.DerivePairKey(_priv!, _phonePub, _phonePub, _macPub, pin); }
-                catch (System.Security.Cryptography.CryptographicException) { return Fail("bad_pair_req", "手机公钥无效"); }
-                if (!BridgeCrypto.TryOpen(key, env.Box, out var plain) || plain != "pair-confirm-phone")
+                byte[]? ya = null;
+                try { if (env.T == "pair_key" && env.Pub is not null) ya = Convert.FromBase64String(env.Pub); }
+                catch (FormatException) { }
+                if (ya is not { Length: 32 }) return Fail("unexpected", $"配对阶段收到非法帧：{env.T}");
+                byte[] k;
+                try { k = Cpace.ScalarMultVfy(_yb, ya); }
+                catch (System.Security.Cryptography.CryptographicException)
                 {
                     window.RecordFailure();
-                    return Fail("bad_pin", $"配对失败：PIN 错误（第 {window.Failures} 次）");
+                    return Fail("bad_point", "配对失败：手机发来的公钥无效（低阶点）");
                 }
-                store.Save(DeviceId!, _name, key);
+                _keys = BridgeCrypto.DerivePairingKeys(k, _ctx!, ya, _ybPub);
+                _phase = Phase.PairingAwaitConfirm;
+                return [new SessionOutput.PairingStarted(_keys.Sas)];
+            }
+            case Phase.PairingAwaitConfirm:
+            {
+                byte[]? mac = null;
+                try { if (env.T == "pair_confirm" && env.Confirm is not null) mac = Convert.FromBase64String(env.Confirm); }
+                catch (FormatException) { }
+                if (mac is null) return Fail("unexpected", $"配对阶段收到非法帧：{env.T}");
+                // PIN 必须仍是发出 pair_chal 时的那一个（期间失败 3 次或过期都会作废）
+                if (window.ActivePin(t) != _pin) return Fail("pairing_closed", "配对窗口已关闭或 PIN 已过期");
+                if (!BridgeCrypto.ConstantTimeEqual(mac, _keys!.ConfirmPhone))
+                {
+                    window.RecordFailure();
+                    return Fail("bad_pin", $"配对失败：PIN 错误或确认码无效（第 {window.Failures} 次）");
+                }
+                store.Save(DeviceId!, _name, _keys.PairKey);
                 window.Close();
                 _phase = Phase.Closed;
-                var ok = new Envelope { T = "pair_ok", Box = BridgeCrypto.Seal(key, "pair-confirm-mac") };
-                return [new SessionOutput.Send(ok.ToJson()), new SessionOutput.Paired(DeviceId!, _name, _sas),
+                var ok = new Envelope { T = "pair_ok", Confirm = Convert.ToBase64String(_keys.ConfirmComputer) };
+                return [new SessionOutput.Send(ok.ToJson()), new SessionOutput.Paired(DeviceId!, _name, _keys.Sas),
                     new SessionOutput.Close("paired")];
             }
             case Phase.AwaitingAuth:
             {
-                if (env.T != "auth" || !BridgeCrypto.TryOpen(_key!, env.Box, out var plain) ||
+                if (env.T != "auth" || !BridgeCrypto.TryOpen(_key!, env.Box, BridgeCrypto.Direction.ToComputer, out var plain) ||
                     plain != $"auth|{_phoneNonce}|{_sid}")
                     return Fail("auth_failed", $"认证失败：设备 {DeviceId}");
                 _phase = Phase.Authenticated;
                 _lastSeq = 0;
-                var ok = new Envelope { T = "auth_ok", Box = BridgeCrypto.Seal(_key!, $"ok|{_sid}|{_phoneNonce}") };
+                var ok = new Envelope
+                {
+                    T = "auth_ok", Box = BridgeCrypto.Seal(_key!, $"ok|{_sid}|{_phoneNonce}", BridgeCrypto.Direction.ToPhone),
+                };
                 return [new SessionOutput.Send(ok.ToJson()), new SessionOutput.Authenticated(DeviceId!)];
             }
             case Phase.Authenticated:
             {
-                if (env.T != "msg" || !BridgeCrypto.TryOpen(_key!, env.Box, out var plain) || Inner.Parse(plain) is not { } inner)
+                if (env.T != "msg" || !BridgeCrypto.TryOpen(_key!, env.Box, BridgeCrypto.Direction.ToComputer, out var plain) ||
+                    Inner.Parse(plain) is not { } inner)
                     return Fail("bad_msg", "无法解密的业务消息");
                 if (inner.Sid != _sid || inner.Seq <= _lastSeq)
                     return Fail("replay", $"拒绝重放或乱序消息 seq={inner.Seq}");
@@ -159,26 +201,26 @@ public sealed class SessionMachine(IPairedKeyStore store, PairingWindow window, 
         }
     }
 
-    /// <summary>给手机回 ack（认证后才有效）。</summary>
-    public string? Ack(int seq, string result) =>
-        Frame(new Inner { Kind = "ack", Sid = _sid, Seq = seq, Result = result });
+    /// <summary>给手机回 ack（认证后才有效）。seq 为被确认的手机消息序号。</summary>
+    public string? Ack(int seq, string result) => Frame(c => new Inner { Kind = "ack", Sid = _sid, Seq = seq, Cseq = c, Result = result });
 
-    /// <summary>把电脑当前的设置发给手机。seq 为 null 时表示电脑主动推送（使用电脑自己的递增序号）。</summary>
+    /// <summary>把电脑当前的设置发给手机。seq 为 null 时表示电脑主动推送。</summary>
     public string? SettingsFrame(SharedSettings st, int? seq = null) =>
-        Frame(new Inner
+        Frame(c => new Inner
         {
-            Kind = "settings", Sid = _sid, Seq = seq ?? ++_outSeq, Paused = st.Paused, BlockSensitive = st.BlockSensitive,
+            Kind = "settings", Sid = _sid, Seq = seq ?? c, Cseq = c, Paused = st.Paused, BlockSensitive = st.BlockSensitive,
             CopyOtp = st.CopyOtp, UpdatedAt = st.UpdatedAt,
         });
 
-    /// <summary>v1.2：电脑上取消配对时通知在线的手机（认证后才有效），发出后由调用方断开。</summary>
-    public string? UnpairFrame() =>
-        _phase == Phase.Authenticated ? Frame(new Inner { Kind = "unpair", Sid = _sid, Seq = ++_outSeq }) : null;
+    /// <summary>电脑上取消配对时通知在线的手机（认证后才有效），发出后由调用方断开。</summary>
+    public string? UnpairFrame() => Frame(c => new Inner { Kind = "unpair", Sid = _sid, Seq = c, Cseq = c });
 
-    private string? Frame(Inner inner)
+    /// <summary>电脑发给手机的每一条消息都带递增的 cseq（手机据此防重放）。</summary>
+    private string? Frame(Func<int, Inner> build)
     {
         if (_phase != Phase.Authenticated || _key is null) return null;
-        return new Envelope { T = "msg", Box = BridgeCrypto.Seal(_key, inner.ToJson()) }.ToJson();
+        var inner = build(++_outSeq);
+        return new Envelope { T = "msg", Box = BridgeCrypto.Seal(_key, inner.ToJson(), BridgeCrypto.Direction.ToPhone) }.ToJson();
     }
 
     private IReadOnlyList<SessionOutput> Dispatch(Inner inner, DateTimeOffset now)
@@ -227,56 +269,65 @@ public sealed class SessionMachine(IPairedKeyStore store, PairingWindow window, 
         }
     }
 
+    private static byte[]? B64(string? s, int len)
+    {
+        if (s is null) return null;
+        try { var b = Convert.FromBase64String(s); return b.Length == len ? b : null; }
+        catch (FormatException) { return null; }
+    }
+
     private IReadOnlyList<SessionOutput> StartPairing(Envelope env, DateTimeOffset now)
     {
-        if (window.ActivePin(now) is null) return Fail("pairing_closed", "收到配对请求，但电脑未开启配对");
-        byte[]? phonePub = null;
-        try { if (env.Pub is not null) phonePub = Convert.FromBase64String(env.Pub); }
-        catch (FormatException) { }
-        if (string.IsNullOrEmpty(env.DeviceId) || phonePub is not { Length: 32 })
+        var pin = window.ActivePin(now);
+        if (pin is null) return Fail("pairing_closed", "收到配对请求，但电脑未开启配对");
+        var phoneNonce = B64(env.Nonce, 16);
+        if (string.IsNullOrEmpty(env.DeviceId) || System.Text.Encoding.UTF8.GetByteCount(env.DeviceId) > 128 || phoneNonce is null)
             return Fail("bad_pair_req", "配对请求字段不完整");
-        _priv = BridgeCrypto.X25519KeyPair.Generate();
-        _phonePub = phonePub;
-        _macPub = _priv.PublicRaw;
-        _sas = BridgeCrypto.Sas(_phonePub, _macPub);
-        _name = string.IsNullOrEmpty(env.DeviceName) ? "未知设备" : env.DeviceName;
+        var wireName = env.DeviceName ?? "";
+        if (wireName.Length > 64) return Fail("bad_pair_req", "手机名称过长");
+        var macNonce = FixedNonce ?? BridgeCrypto.RandomBytes(16);
+        _ctx = new BridgeCrypto.PairingContext(env.DeviceId, wireName, env.Platform ?? "", computerId, computerName, platform,
+            phoneNonce, macNonce);
+        _pin = pin;
+        _yb = FixedScalar ?? BridgeCrypto.RandomBytes(32);
+        _ybPub = Cpace.ScalarMultVfy(_yb, _ctx.Generator(pin));
+        _name = wireName.Length == 0 ? "未知设备" : wireName;
         DeviceId = env.DeviceId;
-        _phase = Phase.Pairing;
+        _phase = Phase.PairingAwaitKey;
         var chal = new Envelope
         {
-            T = "pair_chal", MacId = computerId, MacName = computerName, Platform = platform,
-            Pub = Convert.ToBase64String(_macPub),
+            T = "pair_chal", V = BridgeCrypto.ProtocolVersion, MacId = computerId, MacName = computerName, Platform = platform,
+            Nonce = Convert.ToBase64String(macNonce), Pub = Convert.ToBase64String(_ybPub),
         };
-        return [new SessionOutput.Send(chal.ToJson()), new SessionOutput.PairingStarted(_sas)];
+        return [new SessionOutput.Send(chal.ToJson())];
     }
 
     private IReadOnlyList<SessionOutput> StartAuth(Envelope env)
     {
-        byte[]? raw = null;
-        try { if (env.Nonce is not null) raw = Convert.FromBase64String(env.Nonce); }
-        catch (FormatException) { }
-        if (env.DeviceId is null || raw is not { Length: 16 }) return Fail("bad_hello", "hello 字段不完整");
+        if (env.DeviceId is null || B64(env.Nonce, 16) is null) return Fail("bad_hello", "hello 字段不完整");
         var key = store.KeyFor(env.DeviceId);
         if (key is null)
         {
-            // v1.2：附带电脑 ID，手机据此确认是“这台电脑”不认识它（已在电脑上取消配对），再从列表中移除
             _phase = Phase.Closed;
             return [new SessionOutput.Log($"未配对设备尝试连接：{env.DeviceId}"),
-                new SessionOutput.Send(new Envelope { T = "error", Code = "unknown_device", MacId = computerId }.ToJson()),
+                new SessionOutput.Send(new Envelope { T = "error", Code = "unknown_device" }.ToJson()),
                 new SessionOutput.Close("unknown_device")];
         }
         _key = key;
         _phoneNonce = env.Nonce!;
-        _sid = Convert.ToBase64String(BridgeCrypto.RandomBytes(16));
+        _sid = Convert.ToBase64String(FixedNonce ?? BridgeCrypto.RandomBytes(16));
         DeviceId = env.DeviceId;
         _phase = Phase.AwaitingAuth;
-        return [new SessionOutput.Send(new Envelope { T = "challenge", Nonce = _sid }.ToJson())];
+        return [new SessionOutput.Send(new Envelope { T = "challenge", V = BridgeCrypto.ProtocolVersion, Nonce = _sid }.ToJson())];
     }
 
     private IReadOnlyList<SessionOutput> Info()
     {
         _phase = Phase.Closed;
-        var info = new Envelope { T = "info", MacId = computerId, MacName = computerName, Platform = platform };
+        var info = new Envelope
+        {
+            T = "info", V = BridgeCrypto.ProtocolVersion, MacId = computerId, MacName = computerName, Platform = platform,
+        };
         return [new SessionOutput.Send(info.ToJson()), new SessionOutput.Close("info")];
     }
 

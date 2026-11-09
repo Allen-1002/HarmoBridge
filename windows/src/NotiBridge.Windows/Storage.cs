@@ -34,6 +34,10 @@ public sealed class AppSettings
     public string ComputerId { get; set; } = Guid.NewGuid().ToString().ToUpperInvariant();
     public int Port { get; set; } = BridgeServer.DefaultPort;
     public bool Onboarded { get; set; }
+    /// <summary>配对方式版本：小于 2 表示还是 1.0.x（协议 v1）的配对，升级时清除一次。</summary>
+    public int PairingSchema { get; set; }
+    /// <summary>1.1.0 升级后还没关掉的“请重新配对”提示。</summary>
+    public bool RepairNoticePending { get; set; }
     public bool Paused { get; set; }
     public bool CopyOtp { get; set; } = true;
     public bool ShowContentInList { get; set; }
