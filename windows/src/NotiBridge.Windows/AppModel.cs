@@ -520,13 +520,13 @@ public sealed class AppModel : ObservableObject
 
     public void Unpair(DeviceItem d)
     {
-        // 手机在线：先通知手机同步删除；离线：手机下次连接时会收到 unknown_device，再自行删除这台电脑
+        // 手机在线：先通知手机同步删除；离线：手机下次连接时会收到 unknown_device，只提示用户重新配对或手动删除
         var notified = _server.Unpair(d.Id);
         _store.Remove(d.Id);
         if (_settings.DeviceAliases.Remove(d.Id)) _settings.Save();
         ReloadDevices();
         Log(notified ? $"已取消配对：{d.Name}（已通知手机同步删除）"
-            : $"已取消配对：{d.Name}（手机不在线，下次连接时手机会自动删除这台电脑）");
+            : $"已取消配对：{d.Name}（手机不在线，下次连接时手机会提示这台电脑已取消配对，需要在手机上手动删除）");
     }
 
     private void ReloadDevices()

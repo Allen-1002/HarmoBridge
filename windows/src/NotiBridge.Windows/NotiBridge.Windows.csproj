@@ -14,7 +14,7 @@
     <RootNamespace>NotiBridge.Windows</RootNamespace>
     <ApplicationIcon>Assets\NotiBridge.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.0.3</Version>
+    <Version>1.1.0</Version>
     <Product>NotiBridge</Product>
     <Company>NotiBridge</Company>
     <Description>把手机通知同步到 Windows</Description>

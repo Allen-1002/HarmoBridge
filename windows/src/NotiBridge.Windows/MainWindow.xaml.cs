@@ -200,7 +200,7 @@ public partial class MainWindow : Window
     {
         if ((sender as FrameworkElement)?.Tag is not DeviceItem d) return;
         var r = MessageBox.Show(this,
-            $"取消与“{d.Name}”的配对？\n\n手机在线时会同步从手机上删除这台电脑；不在线时，手机下次连接时会自动删除。之后需要重新配对才能连接。",
+            $"取消与“{d.Name}”的配对？\n\n手机在线时会同步从手机上删除这台电脑；不在线时，手机下次连接会提示“这台电脑可能已取消配对”，需要在手机上手动删除。之后需要重新配对才能连接。",
             "取消配对",
             MessageBoxButton.OKCancel, MessageBoxImage.Question);
         if (r == MessageBoxResult.OK) _model.Unpair(d);

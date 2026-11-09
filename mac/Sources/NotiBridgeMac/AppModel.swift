@@ -230,7 +230,7 @@ final class AppModel: ObservableObject {
     }
 
     func unpair(_ d: PairingStore.Device) {
-        // 手机在线：先通知手机同步删除；离线：手机下次连接时会收到 unknown_device，再自行删除这台电脑
+        // 手机在线：先通知手机同步删除；离线：手机下次连接时会收到 unknown_device，只提示用户重新配对或手动删除
         let notified = server.unpair(deviceId: d.id)
         store.remove(deviceId: d.id)
         let name = displayName(d.id)
@@ -238,7 +238,7 @@ final class AppModel: ObservableObject {
         pairedDevices = store.devices()
         onlineDevices.removeValue(forKey: d.id)
         log(notified ? "已取消配对：\(name)（已通知手机同步删除）"
-                     : "已取消配对：\(name)（手机不在线，下次连接时手机会自动删除这台电脑）")
+                     : "已取消配对：\(name)（手机不在线，下次连接时手机会提示这台电脑已取消配对，需要在手机上手动删除）")
     }
 
     // MARK: - 手机名字
