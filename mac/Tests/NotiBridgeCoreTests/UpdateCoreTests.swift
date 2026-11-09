@@ -49,4 +49,19 @@ final class UpdateCoreTests: XCTestCase {
         XCTAssertEqual(r.asset(named: UpdateCore.macAssetName(version: r.version))?.size, 123)
         XCTAssertEqual(r.notesSnippet(), "简介\n• 自动更新\n• 版本统一")
     }
+
+    /// 发布前检查：dist/ 里有本次发布文件时，用内置公钥验证真实签名，并确认下载前显示的说明第一行是安全提示
+    func testRealReleaseArtifactsIfPresent() throws {
+        let dist = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist")
+        let sums = dist.appendingPathComponent("SHA256SUMS.txt"), sig = dist.appendingPathComponent("SHA256SUMS.txt.sig")
+        guard let s = try? Data(contentsOf: sums), let g = try? Data(contentsOf: sig) else {
+            throw XCTSkip("dist/ 中没有发布文件")
+        }
+        XCTAssertTrue(UpdateCore.verifySumsSignature(sums: s, signatureFile: g))
+        let notes = dist.appendingPathComponent("RELEASE_NOTES-1.1.0.md")
+        if let body = try? String(contentsOf: notes, encoding: .utf8) {
+            XCTAssertTrue(UpdateCore.notesSnippet(body).hasPrefix("安全更新：更新后所有手机都必须重新配对"))
+        }
+    }
 }
