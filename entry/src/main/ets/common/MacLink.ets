@@ -6,6 +6,7 @@ import { b64, derivePairKey, fromB64, generateX25519, open, randomBytes, sas, se
 import { Logger, maskText } from './Logger';
 import { deviceId, findComputer, loadKeyFor, MacInfo, saveComputer } from './PairingStore';
 import { loadSettings, SyncSettings, writeSettings } from './PhoneFilter';
+import { rediscover } from './Rediscover';
 
 /** 外层帧，字段见 docs/protocol.md */
 interface Envelope {
@@ -271,6 +272,7 @@ export class MacLink {
         this.closeSocket();
         this.setState('error', '连接出错');
         this.scheduleReconnect();
+        this.onConnectFailed();
       }
     });
     // 看门狗：扩展进程可能在连接过程中被系统冻结，事件丢失后会一直停在“连接中”。
@@ -281,12 +283,32 @@ export class MacLink {
         this.closeSocket();
         this.setState('error', '连接超时');
         this.scheduleReconnect();
+        this.onConnectFailed();
       }
     }, CONNECT_TIMEOUT_MS);
     ws.connect(`ws://${host}:${port}`).catch((err: BusinessError) => {
       this.listener.onLog(false, `连接失败 ${err.code}: ${err.message}`);
       this.setState('error', '连接失败');
       this.scheduleReconnect();
+      this.onConnectFailed();
+    });
+  }
+
+  /**
+   * 连不上已配对的电脑：可能是电脑换了 IP。按电脑 ID 在局域网里重新查找，找到新地址就立即重连。
+   * 配对过程中不触发（配对时地址由用户选择）。
+   */
+  private onConnectFailed(): void {
+    const mac = this.target;
+    if (mac === undefined || this.key === undefined || this.pairKeys !== undefined) {
+      return;
+    }
+    rediscover(this.ctx, mac).then((moved: boolean) => {
+      if (moved && this.state === 'error' && this.target !== undefined && this.target.macId === mac.macId) {
+        this.listener.onLog(true, `${mac.macName} 的地址已变化，正在用新地址重连`);
+        this.retries = 0;
+        this.connect();
+      }
     });
   }
 

@@ -39,6 +39,16 @@ Mac  → {"t":"pair_ok","box":seal(key,"pair-confirm-mac")}   或 {"t":"error","
 
 成功后：Mac 把 `deviceId → key` 存入钥匙串；手机把 key 存入 Asset Store（系统安全存储）。
 
+## 身份探测（v1.1，未认证）
+
+```
+手机 → {"t":"info"}
+Mac  → {"t":"info","macId":"<uuid>","macName":"<电脑名称>","platform":"mac|windows"}   随后断开
+```
+
+只返回公开信息，不涉及密钥。用途：局域网发现时读不到 TXT 记录，用它判断平台（“Mac 连接”“Windows 连接”分开显示）；
+连不上已配对电脑时按电脑 ID 重新查找新地址（设备 ID 绑定，仅限同一局域网）。旧版 Mac 不认识 `info`，回 `error`，手机按 Mac 处理。
+
 ## 会话认证（每次连接）
 
 ```
@@ -72,3 +82,8 @@ inner JSON 必带 `sid`（= 本次会话 macNonce）和递增 `seq`，Mac 拒绝
 ## 扩展预留
 
 `kind` 以 `call.` 开头的消息保留给 ESP32 通话模块（接听/拨号/挂断/状态），通知模块忽略这些消息。
+
+## ESP32 通话模块（预留）
+
+电脑通过 USB 串口（115200 8N1）连接 ESP32。检测固件：电脑发送 `HB?\n`，HarmoBridge 固件回复一行 `HB-ESP32 <版本> ...`，2 秒内收到即视为已刷写。
+固件尚未发布；三端引导里的“使用方式（纯软件 / ESP32）”、硬件检测和固件检测已经可用，刷写入口在固件发布后启用。

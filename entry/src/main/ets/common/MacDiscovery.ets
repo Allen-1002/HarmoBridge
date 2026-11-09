@@ -2,6 +2,7 @@ import { mdns } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { common } from '@kit.AbilityKit';
 import { fromUtf8 } from './Crypto';
+import { probeComputer, ProbeResult } from './ComputerProbe';
 import { Logger } from './Logger';
 
 export const SERVICE_TYPE = '_harmobridge._tcp';
@@ -49,12 +50,22 @@ export class MacDiscovery {
     const svc = mdns.createDiscoveryService(ctx, SERVICE_TYPE);
     this.service = svc;
     svc.on('serviceFound', (info: mdns.LocalServiceInfo) => {
-      mdns.resolveLocalService(ctx, info).then((r: mdns.LocalServiceInfo) => {
-        if (r.host !== undefined && r.port !== undefined) {
-          onFound({
-            name: r.serviceName, host: r.host.address, port: r.port, id: txt(r, 'id'), platform: txt(r, 'platform'),
-          });
+      mdns.resolveLocalService(ctx, info).then(async (r: mdns.LocalServiceInfo) => {
+        if (r.host === undefined || r.port === undefined) {
+          return;
         }
+        const found: FoundMac = {
+          name: r.serviceName, host: r.host.address, port: r.port, id: txt(r, 'id'), platform: txt(r, 'platform'),
+        };
+        if (found.id.length === 0 || found.platform.length === 0) {
+          // TXT 读不到（系统版本差异或旧版 Mac）：直接问电脑“你是谁”
+          const p: ProbeResult | undefined = await probeComputer(found.host, found.port);
+          if (p !== undefined) {
+            found.id = found.id.length > 0 ? found.id : p.id;
+            found.platform = found.platform.length > 0 ? found.platform : p.platform;
+          }
+        }
+        onFound(found);
       }).catch((err: BusinessError) => {
         Logger.warn(`mdns resolve failed ${err.code}`);
       });

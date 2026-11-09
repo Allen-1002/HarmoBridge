@@ -581,6 +581,18 @@ struct SettingsView: View {
             } footer: {
                 Text("前三项与手机自动保持一致：在任意一端修改，另一端会在下次连接时同步（手机打开 HarmoBridge 或来新通知时）。")
             }
+            Section {
+                Picker("使用方式", selection: Binding(get: { model.esp32.mode }, set: { model.esp32.mode = $0 })) {
+                    ForEach(UseMode.allCases) { m in Text(m.title).tag(m) }
+                }
+                if model.esp32.mode == .esp32 {
+                    Esp32Panel(esp: model.esp32)
+                }
+            } header: {
+                Text("ESP32 通话模块")
+            } footer: {
+                Text(model.esp32.mode == .software ? UseMode.software.detail : "通话固件尚在开发中，目前只能检测硬件和固件。")
+            }
             Section("系统") {
                 Toggle("登录时自动启动", isOn: Binding(get: { model.loginItemEnabled }, set: { model.setLoginItem($0) }))
                 LabeledContent("macOS 通知权限", value: model.notificationsAllowed)

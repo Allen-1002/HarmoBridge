@@ -90,6 +90,20 @@ public class SessionMachineTests
     }
 
     [Fact]
+    public void InfoProbeReturnsIdentityAndCloses()
+    {
+        var m = NewMachine(new MemoryStore(), new PairingWindow());
+        var outs = m.Handle(new Envelope { T = "info" }.ToJson());
+        var info = Sent(outs);
+        Assert.Equal("info", info.T);
+        Assert.Equal("pc-id", info.MacId);
+        Assert.Equal("windows", info.Platform);
+        Assert.Null(info.Pub);
+        Assert.Contains(outs, o => o is SessionOutput.Close c && c.Reason == "info");
+        Assert.Empty(m.Handle(new PhoneSim("x").Hello()));
+    }
+
+    [Fact]
     public void PairingClosedAndUnknownDevice()
     {
         var store = new MemoryStore();

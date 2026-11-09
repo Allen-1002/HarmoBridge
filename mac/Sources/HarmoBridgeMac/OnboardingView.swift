@@ -1,13 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// Mac 端首次启动引导：欢迎 → 一次性申请全部权限（逐项说明用途）→ 配对手机 → 完成。
+/// Mac 端首次启动引导：欢迎 → 选择使用方式（纯软件 / ESP32）→ [ESP32 检测与刷写] → 一次性申请全部权限 → 配对手机 → 完成。
 struct OnboardingView: View {
     @EnvironmentObject var model: AppModel
     @StateObject private var perms = PermissionCenter()
     @State private var step = 0
 
-    private let titles = ["欢迎使用 HarmoBridge", "授予所需权限", "配对你的鸿蒙手机", "设置完成"]
+    private let titles = ["欢迎使用 HarmoBridge", "选择使用方式", "连接 ESP32 模块", "授予所需权限", "配对你的鸿蒙手机", "设置完成"]
+    // 步骤编号
+    private let stepMode = 1, stepEsp = 2, stepPerms = 3, stepPair = 4
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,8 +31,10 @@ struct OnboardingView: View {
                     Text(titles[step]).font(.system(size: 28, weight: .bold))
                     switch step {
                     case 0: welcome
-                    case 1: permissions
-                    case 2: pairing
+                    case stepMode: modeChoice
+                    case stepEsp: esp32Step
+                    case stepPerms: permissions
+                    case stepPair: pairing
                     default: done
                     }
                 }
@@ -42,15 +46,18 @@ struct OnboardingView: View {
             Divider()
             HStack {
                 if step > 0 && step < titles.count - 1 {
-                    Button("上一步") { step -= 1 }
+                    Button("上一步") {
+                        step -= 1
+                        if step == stepEsp && model.esp32.mode == .software { step -= 1 }
+                    }
                 }
                 Spacer()
-                if step == 2 && model.pairedDevices.isEmpty {
+                if step == stepPair && model.pairedDevices.isEmpty {
                     Button("稍后配对") { step += 1 }
                 }
                 Button(nextTitle) { next() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(step == 1 && !perms.requiredReady)
+                    .disabled(step == stepPerms && !perms.requiredReady)
                     .controlSize(.large)
             }
             .padding(.horizontal, 32)
@@ -75,14 +82,55 @@ struct OnboardingView: View {
             model.finishOnboarding()
             return
         }
-        if step == 2 { model.cancelPairing() }
+        if step == stepPair { model.cancelPairing() }
         step += 1
-        if step == 2 && model.pairedDevices.isEmpty && model.pairingPin == nil {
+        // 纯软件模式跳过 ESP32 步骤
+        if step == stepEsp && model.esp32.mode == .software { step += 1 }
+        if step == stepEsp && !model.esp32.scanned { model.esp32.scan() }
+        if step == stepPair && model.pairedDevices.isEmpty && model.pairingPin == nil {
             model.openPairing()
         }
     }
 
     // MARK: - 步骤
+
+    private var modeChoice: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("之后可以在 设置 里更改。手机端也可以选择同样的方式。").foregroundStyle(.secondary)
+            ForEach(UseMode.allCases) { m in
+                Button {
+                    model.esp32.mode = m
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: m == .software ? "bell.badge.fill" : "phone.fill")
+                            .font(.title2).frame(width: 32)
+                            .foregroundStyle(m == .software ? .blue : .green)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(m.title).font(.headline)
+                            Text(m.detail).font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Image(systemName: model.esp32.mode == m ? "checkmark.circle.fill" : "circle")
+                            .font(.title2)
+                            .foregroundStyle(model.esp32.mode == m ? Color.accentColor : .secondary)
+                    }
+                    .padding(14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hbGlass(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+
+    private var esp32Step: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("用支持数据传输的 USB 线把 ESP32 模块连接到这台 Mac，然后检测。ESP32 通话固件尚在开发中，目前可以先完成检测；也可以直接下一步，稍后在 设置 里完成。")
+                .foregroundStyle(.secondary)
+            Esp32Panel(esp: model.esp32)
+        }
+    }
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 16) {

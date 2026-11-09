@@ -121,3 +121,17 @@ export function setOnboarded(ctx: common.Context, v: boolean): void {
   p.putSync('onboarded', v);
   p.flushSync();
 }
+
+/** 使用方式：纯软件，或使用 ESP32 模块（额外支持在电脑上接打电话）。 */
+export type UseMode = 'software' | 'esp32';
+
+export function getUseMode(ctx: common.Context): UseMode {
+  const v = preferences.getPreferencesSync(ctx, { name: UI_PREF }).getSync('useMode', 'software') as string;
+  return v === 'esp32' ? 'esp32' : 'software';
+}
+
+export function setUseMode(ctx: common.Context, m: UseMode): void {
+  const p = preferences.getPreferencesSync(ctx, { name: UI_PREF });
+  p.putSync('useMode', m);
+  p.flushSync();
+}

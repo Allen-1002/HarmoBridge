@@ -8,7 +8,8 @@ namespace HarmoBridge.Windows;
 
 public partial class MainWindow : Window
 {
-    private static readonly string[] ObTitles = ["欢迎使用 HarmoBridge", "允许显示通知", "允许局域网连接", "蓝牙绑定（按需）", "配对手机", "设置完成"];
+    private static readonly string[] ObTitles =
+        ["欢迎使用 HarmoBridge", "选择使用方式", "连接 ESP32 模块", "允许显示通知", "允许局域网连接", "蓝牙绑定（按需）", "配对手机", "设置完成"];
     private readonly AppModel _model;
     private FrameworkElement[] _pages = [];
     private FrameworkElement[] _obPages = [];
@@ -20,7 +21,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = model;
         _pages = [Page0, Page1, Page2, Page3, Page4, Page5];
-        _obPages = [Ob0, Ob1, Ob2, Ob3, Ob4, Ob5];
+        _obPages = [Ob0, ObMode, ObEsp, Ob1, Ob2, Ob3, Ob4, Ob5];
         VersionText.Text = $"HarmoBridge for Windows {Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)} · 与 Mac 版、鸿蒙手机端使用同一套加密协议";
 
         model.Records.CollectionChanged += OnRecordsChanged;
@@ -110,10 +111,12 @@ public partial class MainWindow : Window
         ObTitle.Text = ObTitles[_obIndex];
         ObStep.Text = $"第 {_obIndex + 1} 步，共 {_obPages.Length} 步";
         ObBack.Visibility = _obIndex == 0 ? Visibility.Hidden : Visibility.Visible;
+        var page = _obPages[_obIndex];
         ObNext.Content = _obIndex == 0 ? "开始设置" : _obIndex == _obPages.Length - 1 ? "完成" :
-            _obIndex == 4 && _model.Devices.Count == 0 ? "稍后配对" : "下一步";
-        if (_obIndex == 1) _model.SendLocalTestNotification(); // 发一条通知，Windows 会登记本程序的通知权限
-        if (_obIndex == 4 && !_model.IsPairing && _model.Devices.Count == 0) _model.OpenPairing();
+            page == Ob4 && _model.Devices.Count == 0 ? "稍后配对" : "下一步";
+        if (page == Ob1) _model.SendLocalTestNotification(); // 发一条通知，Windows 会登记本程序的通知权限
+        if (page == ObEsp && !_model.Esp32.Scanned) _model.Esp32.Scan();
+        if (page == Ob4 && !_model.IsPairing && _model.Devices.Count == 0) _model.OpenPairing();
     }
 
     private void OnObNext(object sender, RoutedEventArgs e)
@@ -127,6 +130,7 @@ public partial class MainWindow : Window
             return;
         }
         _obIndex++;
+        if (_obPages[_obIndex] == ObEsp && !_model.Esp32.UseEsp32) _obIndex++; // 纯软件跳过 ESP32 步骤
         UpdateOnboarding();
     }
 
@@ -134,6 +138,7 @@ public partial class MainWindow : Window
     {
         if (_obIndex == 0) return;
         _obIndex--;
+        if (_obPages[_obIndex] == ObEsp && !_model.Esp32.UseEsp32) _obIndex--;
         UpdateOnboarding();
     }
 

@@ -108,6 +108,7 @@ public sealed class SessionMachine(IPairedKeyStore store, PairingWindow window, 
                 {
                     "pair_req" => StartPairing(env, t),
                     "hello" => StartAuth(env),
+                    "info" => Info(),
                     _ => Fail("unexpected", $"首帧类型非法：{env.T}"),
                 };
             case Phase.Pairing:
@@ -240,6 +241,13 @@ public sealed class SessionMachine(IPairedKeyStore store, PairingWindow window, 
         DeviceId = env.DeviceId;
         _phase = Phase.AwaitingAuth;
         return [new SessionOutput.Send(new Envelope { T = "challenge", Nonce = _sid }.ToJson())];
+    }
+
+    private IReadOnlyList<SessionOutput> Info()
+    {
+        _phase = Phase.Closed;
+        var info = new Envelope { T = "info", MacId = computerId, MacName = computerName, Platform = platform };
+        return [new SessionOutput.Send(info.ToJson()), new SessionOutput.Close("info")];
     }
 
     private IReadOnlyList<SessionOutput> Fail(string code, string log)

@@ -106,6 +106,9 @@ public sealed class AppModel : ObservableObject
     private string _lastOtpApp = "";
     private int _todayOtp;
 
+    /// <summary>ESP32 通话模块（使用方式、硬件检测、固件）</summary>
+    public Esp32Manager Esp32 { get; }
+
     public ObservableCollection<DeviceItem> Devices { get; } = [];
     public ObservableCollection<RecordItem> Records { get; } = [];
     public ObservableCollection<string> Logs { get; } = [];
@@ -116,6 +119,7 @@ public sealed class AppModel : ObservableObject
     public AppModel()
     {
         _settings = AppSettings.Load();
+        Esp32 = new Esp32Manager(_settings);
         _notifier = new Notifier(Log);
         _notifier.Activated += a => Dispatch(() => OnToastActivated(a));
         _mdns = new MdnsAdvertiser(s => Dispatch(() => Log(s)));

@@ -98,6 +98,11 @@ public final class SessionMachine {
             switch env.t {
             case "pair_req": return startPairing(env, now: now)
             case "hello": return startAuth(env)
+            case "info":
+                // 未认证的“你是谁”探测：只返回公开信息（电脑 ID、名称、平台），然后断开
+                state = .closed
+                let info = Envelope(t: "info", macId: macId, macName: macName, platform: "mac")
+                return [.send(info.json()), .close("info")]
             default: return fail("unexpected", log: "首帧类型非法：\(env.t)")
             }
         case let .pairing(priv, phonePub, macPub, devId, name, sas):

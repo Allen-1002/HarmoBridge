@@ -24,6 +24,20 @@ final class CryptoVectorTests: XCTestCase {
         XCTAssertEqual(try BridgeCrypto.open(key, "AAAAAAAAAAAAAAAAq0Nf5FBV6VP0KkCm9JQvDAeOprNkTWShWA8qKg=="), "通知 hello")
     }
 
+    func testInfoProbe() {
+        final class Empty: PairedKeyStore {
+            func key(for deviceId: String) -> SymmetricKey? { nil }
+            func save(deviceId: String, name: String, key: SymmetricKey) {}
+        }
+        let m = SessionMachine(store: Empty(), window: PairingWindow(), macId: "mid", macName: "Mac")
+        let outs = m.handle(Envelope(t: "info").json())
+        guard case let .send(frame) = outs.first, let env = Envelope.parse(frame) else { return XCTFail("no reply") }
+        XCTAssertEqual(env.t, "info")
+        XCTAssertEqual(env.macId, "mid")
+        XCTAssertEqual(env.platform, "mac")
+        XCTAssertTrue(outs.contains(.close("info")))
+    }
+
     func testPairChallengeCarriesPlatform() {
         let env = Envelope(t: "pair_chal", macId: "m", macName: "Mac", platform: "mac", pub: "x")
         XCTAssertTrue(env.json().contains("\"platform\":\"mac\""))

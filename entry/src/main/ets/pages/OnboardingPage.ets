@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
-import { setOnboarded } from '../common/AppStatus';
+import { getUseMode, setOnboarded, setUseMode, UseMode } from '../common/AppStatus';
 import { describeError } from '../common/ErrorDescriber';
 import { getGrantedBundles, isPermissionGranted, isUserGranted, openGrantSettings, PERM_SUBSCRIBE }
   from '../common/SubscriptionService';
@@ -15,6 +15,7 @@ interface StepInfo {
 
 const STEPS: Array<StepInfo> = [
   { title: '欢迎使用 HarmoBridge', desc: '把手机通知安全地同步到你的 Mac 或 Windows 电脑，可以同时连接多台。数据只在你自己的设备之间加密传输，不经过任何服务器。' },
+  { title: '选择使用方式', desc: '纯软件即可同步通知和验证码。想在电脑上接打电话，需要额外的 ESP32 模块。之后可以在设置里更改。' },
   { title: '允许读取通知', desc: '在系统弹出的页面中打开“允许获取本机通知”，并勾选要同步到电脑的应用。' },
   { title: '选择蓝牙设备', desc: '系统要求通知订阅绑定一台已配对的蓝牙设备。推荐直接选择你的电脑（Mac 或 Windows）。' },
   { title: '连接电脑', desc: '在电脑上打开 HarmoBridge，点“配对新手机”。之后可以在“电脑连接”里继续添加其他电脑。' },
@@ -30,6 +31,7 @@ struct OnboardingPage {
   @State grantedApps: number = 0;
   @State btDone: boolean = false;
   @State macDone: boolean = false;
+  @State mode: UseMode = 'software';
   private scroller: Scroller = new Scroller();
 
   private ctx(): common.UIAbilityContext {
@@ -37,6 +39,7 @@ struct OnboardingPage {
   }
 
   aboutToAppear(): void {
+    this.mode = getUseMode(this.ctx());
     this.checkGrant();
   }
 
@@ -63,11 +66,11 @@ struct OnboardingPage {
 
   private canNext(): boolean {
     switch (this.step) {
-      case 1:
-        return this.userGranted;
       case 2:
-        return this.btDone;
+        return this.userGranted;
       case 3:
+        return this.btDone;
+      case 4:
         return this.macDone;
       default:
         return true;
@@ -114,6 +117,32 @@ struct OnboardingPage {
   }
 
   @Builder
+  ModeOption(value: UseMode, symbol: Resource, title: string, desc: string) {
+    Card() {
+      Row() {
+        IconBadge({ symbol: symbol, tone: this.mode === value ? 'accent' : 'neutral', boxSize: 40 })
+        Column({ space: 4 }) {
+          Text(title).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.hb_text'))
+          Text(desc).fontSize(13).fontColor($r('app.color.hb_text2'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        .margin({ left: 12, right: 8 })
+
+        SymbolGlyph(this.mode === value ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.circle'))
+          .fontSize(22)
+          .fontColor([this.mode === value ? $r('app.color.hb_accent') : $r('app.color.hb_text2')])
+      }
+      .width('100%')
+      .padding(16)
+      .onClick(() => {
+        this.mode = value;
+        setUseMode(this.ctx(), value);
+      })
+    }
+  }
+
+  @Builder
   StepBody() {
     if (this.step === 0) {
       Column({ space: 12 }) {
@@ -138,6 +167,20 @@ struct OnboardingPage {
         }
       }
     } else if (this.step === 1) {
+      Column({ space: 12 }) {
+        this.ModeOption('software', $r('sys.symbol.bell_fill'), '纯软件（推荐）',
+          '同步通知、验证码自动复制。不需要任何额外硬件。不能接打电话。')
+        this.ModeOption('esp32', $r('sys.symbol.phone_fill'), '使用 ESP32',
+          '在上面的基础上，还可以在电脑上接听、拨打电话。需要一块 ESP32 模块插在电脑 USB 上，' +
+          '由电脑端 HarmoBridge 自动检测并刷写固件。')
+        if (this.mode === 'esp32') {
+          Text('ESP32 通话固件尚在开发中，目前可以先完成检测流程；固件发布后在电脑端一键刷写即可。')
+            .fontSize(12)
+            .fontColor($r('app.color.hb_text2'))
+        }
+      }
+      .width('100%')
+    } else if (this.step === 2) {
       Column({ space: 12 }) {
         this.Hero($r('sys.symbol.checkmark_shield'))
         Card() {
@@ -167,13 +210,13 @@ struct OnboardingPage {
           .padding(16)
         }
       }
-    } else if (this.step === 2) {
+    } else if (this.step === 3) {
       BluetoothPanel({
         onChanged: (addr: string) => {
           this.btDone = addr.length > 0;
         }
       })
-    } else if (this.step === 3) {
+    } else if (this.step === 4) {
       MacPanel({
         onPaired: () => {
           this.macDone = true;

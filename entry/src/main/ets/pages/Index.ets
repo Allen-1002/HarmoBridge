@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
-import { AppStatus, isOnboarded, loadStatus } from '../common/AppStatus';
+import { AppStatus, getUseMode, isOnboarded, loadStatus, setUseMode } from '../common/AppStatus';
 import { describeError } from '../common/ErrorDescriber';
 import { clearRecords, EventRecord, readRecords } from '../common/NotificationStore';
 import { loadSettings, saveSettings, SyncSettings } from '../common/PhoneFilter';
@@ -57,6 +57,7 @@ struct Index {
   @State records: Array<EventRecord> = [];
   @State cancelled: Array<string> = [];
   @State showContent: boolean = false;
+  @State useEsp32: boolean = false;
   @State loaded: boolean = false;
 
   private ctx(): common.UIAbilityContext {
@@ -72,6 +73,7 @@ struct Index {
   }
 
   onPageShow(): void {
+    this.useEsp32 = getUseMode(this.ctx()) === 'esp32';
     if (this.loaded) {
       this.reload();
     }
@@ -444,6 +446,15 @@ struct Index {
               title: 'Mac 连接',
               subtitle: this.status.macNames.length > 0 ? this.status.macNames : '未配对',
               onTap: () => this.goLink('mac'),
+            })
+            SwitchRow({
+              title: '使用 ESP32 通话模块',
+              subtitle: this.useEsp32 ? '在电脑端 HarmoBridge 中检测和刷写 ESP32（固件开发中）' : '纯软件：同步通知和验证码，不能接打电话',
+              isOn: this.useEsp32,
+              onToggle: (on: boolean) => {
+                this.useEsp32 = on;
+                setUseMode(this.ctx(), on ? 'esp32' : 'software');
+              },
             })
             NavRow({
               symbol: $r('sys.symbol.desktop'),

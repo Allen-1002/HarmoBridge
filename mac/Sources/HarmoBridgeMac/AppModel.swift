@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import HarmoBridgeCore
 import IOBluetooth
@@ -49,6 +50,9 @@ final class AppModel: ObservableObject {
     @Published var btDevices: [BTDevice] = []
     @Published var selectedBT: String = UserDefaults.standard.string(forKey: "hfpDevice") ?? ""
     private var callBridge: CallBridge?
+    /// ESP32 通话模块（使用方式、硬件检测、固件）
+    let esp32 = Esp32Manager()
+    private var esp32Changes: AnyCancellable?
 
     let port: UInt16
     private let store = KeychainStore()
@@ -79,6 +83,8 @@ final class AppModel: ObservableObject {
         }
         server.start(port: port, serviceName: "HarmoBridge-\(macName)", macId: macId)
         pairedDevices = store.devices()
+        // ESP32 状态变化时刷新界面（引导页、设置页通过 model 读取）
+        esp32Changes = esp32.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         loginItemEnabled = SMAppService.mainApp.status == .enabled
         // 首次使用由引导页统一申请权限；完成引导后启动时只确认通知权限
         if onboarded {

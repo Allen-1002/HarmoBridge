@@ -14,7 +14,7 @@
     <RootNamespace>HarmoBridge.Windows</RootNamespace>
     <ApplicationIcon>Assets\HarmoBridge.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Product>HarmoBridge</Product>
     <Company>HarmoBridge</Company>
     <Description>把鸿蒙手机通知同步到 Windows</Description>
@@ -28,6 +28,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Toolkit.Uwp.Notifications" Version="7.1.3" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.0" />
+    <PackageReference Include="System.Management" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\HarmoBridge.Core\HarmoBridge.Core.csproj" />
