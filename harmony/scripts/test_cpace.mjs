@@ -15,6 +15,8 @@ const root = join(here, '..', '..');
 const work = mkdtempSync(join(tmpdir(), 'nb-cpace-'));
 copyFileSync(join(root, 'harmony/entry/src/main/ets/common/Cpace.ets'), join(work, 'Cpace.ts'));
 const C = await import(pathToFileURL(join(work, 'Cpace.ts')).href);
+copyFileSync(join(root, 'harmony/entry/src/main/ets/common/FilterLogic.ets'), join(work, 'FilterLogic.ts'));
+const F = await import(pathToFileURL(join(work, 'FilterLogic.ts')).href);
 const V = JSON.parse(readFileSync(join(root, 'docs/test-vectors/pairing-v2.json'), 'utf8'));
 
 const hex = (s) => new Uint8Array(Buffer.from(s, 'hex'));
@@ -121,6 +123,48 @@ test('NotiBridge v2 配对向量', () => {
 test('SAS 格式', () => {
   assert.equal(C.sasOf(new Uint8Array(32)), '0000 0000');
   assert.equal(C.sasOf(new Uint8Array(32).fill(0xff)), '1162 7775');
+});
+
+test('验证码在按应用屏蔽和敏感过滤之后', () => {
+  const s = { paused: false, blockSensitive: true, blockedBundles: [], copyOtp: true, updatedAt: 0, allowSensitiveOtp: false };
+  let d = F.decide(s, 'com.ohos.mms', '短信', '您的验证码是 483920');
+  assert.equal(d.action, 'otp');
+  assert.equal(d.otp, '483920');
+  s.blockedBundles = ['com.ohos.mms'];
+  assert.equal(F.decide(s, 'com.ohos.mms', '短信', '您的验证码是 483920').action, 'drop');
+  s.blockedBundles = [];
+  d = F.decide(s, 'com.ohos.mms', '短信', '【某银行】您正在转账，验证码 556677');
+  assert.equal(d.action, 'drop');
+  assert.equal(d.record, false);
+  assert.equal(F.decide(s, 'com.icbc.mobile', '工行', '动态码 1234').action, 'drop');
+  s.allowSensitiveOtp = true;
+  assert.equal(F.decide(s, 'com.ohos.mms', '短信', '【某银行】您正在转账，验证码 556677').action, 'otp');
+  s.copyOtp = false;
+  d = F.decide(s, 'com.ohos.mms', '短信', '您的验证码是 483920');
+  assert.equal(d.action, 'drop');
+  assert.equal(d.record, false);
+  s.copyOtp = true;
+  s.paused = true;
+  assert.equal(F.decide(s, 'com.ohos.mms', '短信', '您的验证码是 483920').action, 'drop');
+  s.paused = false;
+  assert.equal(F.decide(s, 'com.tencent.wechat', '张三', '晚上吃饭').action, 'forward');
+});
+
+test('通知记录：7 天 / 200 条 / 256 KB 上限', () => {
+  const now = 1_800_000_000_000;
+  const len = (x) => Buffer.byteLength(x);
+  const mk = (t, i) => ({ kind: 'publish', recordTime: t, hashCode: String(i), appName: 'A', result: '已转发' });
+  const old = [mk(now - 8 * 86400000, 0), mk(now - 1000, 1)];
+  assert.deepEqual(F.trimRecords(old, now, len).map((r) => r.hashCode), ['1']);
+  const many = Array.from({ length: 300 }, (_, i) => mk(now - 300 + i, i));
+  const t = F.trimRecords(many, now, len);
+  assert.equal(t.length, 200);
+  assert.equal(t[t.length - 1].hashCode, '299', '保留最新的');
+  const big = Array.from({ length: 150 }, (_, i) => ({ ...mk(now, i), targets: 'x'.repeat(3000) }));
+  const tb = F.trimRecords(big, now, len);
+  const bytes = tb.reduce((n, r) => n + len(JSON.stringify(r)) + 1, 0);
+  assert.ok(bytes <= 256 * 1024 && tb.length < 150);
+  assert.ok(!('title' in mk(now, 1)) && !('text' in mk(now, 1)));
 });
 
 console.log(`\n${passed} tests passed`);

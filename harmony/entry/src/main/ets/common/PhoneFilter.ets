@@ -7,7 +7,7 @@ import { SyncSettings } from './FilterLogic';
  * 手机端过滤设置的存储。过滤逻辑本身在 FilterLogic.ets（纯逻辑，可在电脑上测试）。
  * 与 Mac 端 SyncFilter 的默认关键词保持一致；电脑端还会再过滤一次。
  */
-export { blockReason, decide, DEFAULT_SENSITIVE_KEYWORDS, extractOtp, SyncSettings } from './FilterLogic';
+export { blockReason, decide, Decision, DEFAULT_SENSITIVE_KEYWORDS, extractOtp, SyncSettings } from './FilterLogic';
 
 const PREF_NAME = 'notibridge_sync';
 

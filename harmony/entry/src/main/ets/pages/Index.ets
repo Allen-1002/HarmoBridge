@@ -536,6 +536,7 @@ struct Index {
         }
         Text('这三个开关会和电脑端双向同步。').fontSize(12).fontColor($r('app.color.hb_text3')).width('100%')
           .margin({ left: 8, top: 6 })
+        Column() {
         Card() {
           SwitchRow({
             title: '也同步银行、支付类验证码',
@@ -550,6 +551,8 @@ struct Index {
             },
           })
         }
+        }
+        .width('100%')
         .margin({ top: 8 })
 
         SectionTitle({ title: '隐私' })
