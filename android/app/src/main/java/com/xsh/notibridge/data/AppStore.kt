@@ -130,6 +130,7 @@ class AppStore(private val ctx: Context) : PhoneBackend {
             if (m != null && wrapped != null) {
                 val pending = readList(PENDING_KEY).filter { it.macId != macId } + m
                 e.putString(PENDING_PREFIX + macId, wrapped).putString(PENDING_KEY, Computer.listToJson(pending))
+                    .putLong(PENDING_SINCE_PREFIX + macId, System.currentTimeMillis())
             }
         }
         e.remove(KEY_PREFIX + macId).putString(LIST_KEY, Computer.listToJson(list.filter { it.macId != macId })).commit()
@@ -142,12 +143,14 @@ class AppStore(private val ctx: Context) : PhoneBackend {
 
     override fun pendingKey(macId: String): ByteArray? = unwrap(pairing.getString(PENDING_PREFIX + macId, null))
 
+    override fun pendingSince(macId: String): Long = pairing.getLong(PENDING_SINCE_PREFIX + macId, 0)
+
     @Synchronized
     override fun clearPendingUnpair(macId: String) = clearPendingUnpairNoNotify(macId)
 
     private fun clearPendingUnpairNoNotify(macId: String) {
         val pending = readList(PENDING_KEY)
-        pairing.edit().remove(PENDING_PREFIX + macId)
+        pairing.edit().remove(PENDING_PREFIX + macId).remove(PENDING_SINCE_PREFIX + macId)
             .putString(PENDING_KEY, Computer.listToJson(pending.filter { it.macId != macId })).commit()
     }
 
@@ -183,6 +186,34 @@ class AppStore(private val ctx: Context) : PhoneBackend {
         mutableListOf()
     }
 
+    // ---------- 1.1.0 安全升级 ----------
+
+    /**
+     * 第一次启动 1.1.0：清除所有协议 v1 的配对（含待通知列表），只做一次。
+     * 以前用过（有配对或完成过引导）时记下提示，首页弹一次“请重新配对”。
+     */
+    @Synchronized
+    fun migratePairingSchema(wasOnboarded: Boolean) {
+        if (pairing.getInt(SCHEMA_KEY, 0) >= PAIRING_SCHEMA) return
+        val had = readList(LIST_KEY).isNotEmpty() || readList(PENDING_KEY).isNotEmpty()
+        val keep = pairing.getString("deviceId", null)
+        pairing.edit().clear().apply {
+            if (keep != null) putString("deviceId", keep)
+            putInt(SCHEMA_KEY, PAIRING_SCHEMA)
+            putBoolean(REPAIR_NOTICE_KEY, had || wasOnboarded)
+        }.commit()
+        log(true, "已清除 1.0.x 的配对（协议 v1），需要重新配对")
+        changed()
+    }
+
+    /** 取出并清除“请重新配对”提示 */
+    @Synchronized
+    fun takeRepairNotice(): Boolean {
+        val v = pairing.getBoolean(REPAIR_NOTICE_KEY, false)
+        if (v) pairing.edit().remove(REPAIR_NOTICE_KEY).commit()
+        return v
+    }
+
     // ---------- 同步设置 ----------
 
     override fun loadSettings(): SyncSettings = SyncSettings(
@@ -191,6 +222,7 @@ class AppStore(private val ctx: Context) : PhoneBackend {
         copyOtp = sync.getBoolean("copyOtp", true),
         blockedBundles = (sync.getStringSet("blockedBundles", emptySet()) ?: emptySet()).toMutableSet(),
         updatedAt = sync.getLong("updatedAt", 0),
+        allowSensitiveOtp = sync.getBoolean("allowSensitiveOtp", false),
     )
 
     /** 本机修改：刷新修改时间 */
@@ -202,7 +234,7 @@ class AppStore(private val ctx: Context) : PhoneBackend {
     override fun writeSettings(s: SyncSettings) {
         sync.edit().putBoolean("paused", s.paused).putBoolean("blockSensitive", s.blockSensitive)
             .putBoolean("copyOtp", s.copyOtp).putStringSet("blockedBundles", s.blockedBundles.toSet())
-            .putLong("updatedAt", s.updatedAt).commit()
+            .putLong("updatedAt", s.updatedAt).putBoolean("allowSensitiveOtp", s.allowSensitiveOtp).commit()
         changed()
     }
 
@@ -217,7 +249,7 @@ class AppStore(private val ctx: Context) : PhoneBackend {
 
     /** 清除所有数据：配对密钥、设置、记录、Keystore 主密钥。 */
     fun clearAll() {
-        pairing.edit().clear().commit()
+        pairing.edit().clear().putInt(SCHEMA_KEY, PAIRING_SCHEMA).commit()
         sync.edit().clear().commit()
         ui.edit().clear().commit()
         runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(MASTER_ALIAS) }
@@ -231,6 +263,11 @@ class AppStore(private val ctx: Context) : PhoneBackend {
         private const val KEY_PREFIX = "key."
         private const val PENDING_KEY = "pendingUnpair"
         private const val PENDING_PREFIX = "unpairkey."
+        private const val PENDING_SINCE_PREFIX = "unpairsince."
+        private const val SCHEMA_KEY = "pairingSchema"
+        private const val REPAIR_NOTICE_KEY = "repairNotice"
+        /** 1.1.0 起配对协议为 v2（CPace），旧配对作废 */
+        const val PAIRING_SCHEMA = 2
         private const val NOTICE_KEY = "unpairNotices"
     }
 }

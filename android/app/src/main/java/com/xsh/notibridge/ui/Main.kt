@@ -77,9 +77,11 @@ fun MainScreen(resumeTick: Int, onRerunOnboarding: () -> Unit) {
     val ctx = LocalContext.current
     val app = NotiApp.instance
     var notices by remember { mutableStateOf<List<String>>(emptyList()) }
+    var repairNotice by remember { mutableStateOf(false) }
 
     LaunchedEffect(resumeTick) {
         notices = notices + app.store.takeUnpairNotices()
+        if (app.store.takeRepairNotice()) repairNotice = true
     }
 
     BackHandler(enabled = route.isNotEmpty()) { route = "" }
@@ -114,6 +116,18 @@ fun MainScreen(resumeTick: Int, onRerunOnboarding: () -> Unit) {
                 }
             }
         }
+    }
+
+    if (repairNotice) {
+        AlertDialog(
+            onDismissRequest = { repairNotice = false },
+            title = { Text("安全升级：配对方式已更新，请在电脑和手机上重新配对") },
+            text = {
+                Text("NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下配对过程也无法离线猜出配对码，并加了双向防重放。" +
+                    "旧的配对已失效并已清除。\n\n请把电脑端也更新到 1.1.0，在电脑上点“配对新手机”，再到“电脑连接”里重新配对。")
+            },
+            confirmButton = { TextButton(onClick = { repairNotice = false }) { Text("知道了") } },
+        )
     }
 
     if (notices.isNotEmpty()) {
@@ -213,8 +227,9 @@ private fun NotificationsTab() {
         }
         if (list.isEmpty()) {
             Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("还没有收到通知", style = MaterialTheme.typography.titleMedium)
-                Hint("完成设置后，这里会显示最近同步的通知（仅保存在本机）", Modifier.padding(top = 6.dp))
+                Text(if (app.records.enabled) "还没有收到通知" else "通知记录已关闭", style = MaterialTheme.typography.titleMedium)
+                Hint(if (app.records.enabled) "这里只记录应用、时间和处理结果（不保存通知内容，仅在本机保留 7 天）"
+                    else "可以在“设置 → 隐私”里重新打开", Modifier.padding(top = 6.dp))
             }
         } else {
             LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -227,9 +242,9 @@ private fun NotificationsTab() {
                                 Spacer(Modifier.padding(4.dp))
                                 Hint(fmt.format(Date(r.time)))
                             }
-                            if (r.title.isNotEmpty()) Text(r.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 6.dp))
-                            if (r.text.isNotEmpty()) Text(r.text, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (r.targets.isNotEmpty()) Text("发往：${r.targets}", style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp))
                         }
                     }
                 }
@@ -294,13 +309,34 @@ private fun SettingsTab(resumeTick: Int, onOpen: (String) -> Unit, onRerunOnboar
         SectionCard {
             ToggleItem("同步通知到电脑", checked = !s.paused) { on -> updateSettings { it.paused = !on } }
             Divider()
-            ToggleItem("验证码复制到电脑剪贴板", "只发送验证码数字，不发送短信全文", s.copyOtp) { on -> updateSettings { it.copyOtp = on } }
+            ToggleItem("验证码同步", "只把验证码数字发到电脑剪贴板，不发送短信全文；被屏蔽的应用不发", s.copyOtp) { on ->
+                updateSettings { it.copyOtp = on }
+            }
             Divider()
             ToggleItem("不转发银行、支付类通知", "含余额、转账、付款等字样的通知留在手机上", s.blockSensitive) { on ->
                 updateSettings { it.blockSensitive = on }
             }
         }
         Hint("这三个开关会和电脑端双向同步。", Modifier.padding(start = 8.dp, top = 6.dp))
+        SectionCard(Modifier.padding(top = 8.dp)) {
+            ToggleItem("也同步银行、支付类验证码", "默认不同步（开启敏感过滤时）；只在这台手机上生效", s.allowSensitiveOtp) { on ->
+                val st = app.store.loadSettings()
+                st.allowSensitiveOtp = on
+                app.store.writeSettings(st) // 本机开关，不改修改时间、不同步到电脑
+            }
+        }
+
+        SectionTitle("隐私")
+        SectionCard {
+            ToggleItem("记录收到的通知", "只记应用、时间和处理结果，不保存内容；本机保留 7 天、最多 200 条", app.records.enabled) { on ->
+                app.records.enabled = on
+            }
+            Divider()
+            RowItem("清空通知记录", onClick = {
+                app.records.clear()
+                Toast.makeText(ctx, "已清空通知记录", Toast.LENGTH_SHORT).show()
+            })
+        }
 
         SectionTitle("设备与权限")
         SectionCard {

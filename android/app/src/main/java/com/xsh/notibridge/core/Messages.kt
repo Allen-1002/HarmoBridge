@@ -39,13 +39,15 @@ data class Computer(
 const val DEFAULT_PORT = 47800
 const val SERVICE_TYPE = "_notibridge._tcp"
 
-/** 两端同步的开关（docs/protocol.md kind=settings）。blockedBundles 只在手机本地。 */
+/** 两端同步的开关（docs/protocol.md kind=settings）。blockedBundles、allowSensitiveOtp 只在手机本地。 */
 data class SyncSettings(
     var paused: Boolean = false,
     var blockSensitive: Boolean = true,
     var copyOtp: Boolean = true,
     var blockedBundles: MutableSet<String> = mutableSetOf(),
     var updatedAt: Long = 0,
+    /** 只在手机本地：银行/支付类验证码也同步（默认不同步） */
+    var allowSensitiveOtp: Boolean = false,
 )
 
 /** 发往电脑的一条通知。 */
@@ -63,6 +65,8 @@ data class OtpMessage(val id: String, val bundleName: String, val appName: Strin
 
 /** 外层帧。null 字段不输出。 */
 class Envelope(val t: String) {
+    /** 协议版本（v2 起必带 2） */
+    var v: Int? = null
     var deviceId: String? = null
     var deviceName: String? = null
     var macId: String? = null
@@ -72,9 +76,12 @@ class Envelope(val t: String) {
     var nonce: String? = null
     var box: String? = null
     var code: String? = null
+    /** v2 配对确认码（HMAC，Base64） */
+    var confirm: String? = null
 
     fun json(): String {
         val o = JSONObject().put("t", t)
+        v?.let { o.put("v", it) }
         deviceId?.let { o.put("deviceId", it) }
         deviceName?.let { o.put("deviceName", it) }
         macId?.let { o.put("macId", it) }
@@ -84,6 +91,7 @@ class Envelope(val t: String) {
         nonce?.let { o.put("nonce", it) }
         box?.let { o.put("box", it) }
         code?.let { o.put("code", it) }
+        confirm?.let { o.put("confirm", it) }
         return o.toString()
     }
 
@@ -91,6 +99,7 @@ class Envelope(val t: String) {
         fun parse(s: String): Envelope? = try {
             val o = JSONObject(s)
             Envelope(o.getString("t")).apply {
+                v = if (o.has("v") && !o.isNull("v")) o.optInt("v") else null
                 deviceId = o.str("deviceId")
                 deviceName = o.str("deviceName")
                 macId = o.str("macId")
@@ -100,6 +109,7 @@ class Envelope(val t: String) {
                 nonce = o.str("nonce")
                 box = o.str("box")
                 code = o.str("code")
+                confirm = o.str("confirm")
             }
         } catch (e: Exception) {
             null

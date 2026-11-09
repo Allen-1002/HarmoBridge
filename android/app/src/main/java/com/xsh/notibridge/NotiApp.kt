@@ -16,6 +16,8 @@ class NotiApp : Application() {
         super.onCreate()
         instance = this
         store = AppStore(this)
+        // 1.1.0：协议 v2，清除旧配对（只做一次）
+        store.migratePairingSchema(store.ui.getBoolean("onboarded", false))
         records = Records(this)
     }
 

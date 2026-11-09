@@ -61,27 +61,25 @@ class NotifyListener : NotificationListenerService() {
 
         val appName = appLabel(this, sbn.packageName)
         val settings = app.store.loadSettings()
-        var result: String
-        val otp = if (settings.copyOtp && !settings.paused && sbn.packageName !in settings.blockedBundles)
-            Filter.extractOtp(title, text) else ""
-        if (otp.isNotEmpty()) {
-            app.forwarder.forwardOtp(OtpMessage(sbn.key, sbn.packageName, appName, otp))
-            result = "验证码已发送"
-        } else {
-            val reason = Filter.blockReason(settings, sbn.packageName, title, text)
-            if (reason.isNotEmpty()) {
-                result = reason
-            } else if (!app.forwarder.isPaired()) {
-                result = "未配对电脑"
-            } else {
-                app.forwarder.forward(
-                    OutgoingNotification(sbn.key, sbn.packageName, appName, title, text, sbn.postTime, false)
-                )
-                synchronized(forwardedKeys) { forwardedKeys.add(sbn.key) }
-                result = "已转发"
+        // 先按应用屏蔽和敏感过滤决定，再提取验证码（见 Filter.decide）
+        val d = Filter.decide(settings, sbn.packageName, title, text)
+        val computers = app.store.pairedComputers()
+        var result = d.reason
+        var targets = ""
+        when (d.action) {
+            Filter.Action.OTP -> if (computers.isEmpty()) result = "未配对电脑" else {
+                app.forwarder.forwardOtp(OtpMessage(sbn.key, sbn.packageName, appName, d.otp))
+                targets = computers.joinToString("、") { it.macName }
             }
+            Filter.Action.FORWARD -> if (computers.isEmpty()) result = "未配对电脑" else {
+                app.forwarder.forward(OutgoingNotification(sbn.key, sbn.packageName, appName, title, text, sbn.postTime, false))
+                synchronized(forwardedKeys) { forwardedKeys.add(sbn.key) }
+                targets = computers.joinToString("、") { it.macName }
+            }
+            Filter.Action.DROP -> {}
         }
-        app.records.add(Records.Record(System.currentTimeMillis(), sbn.key, sbn.packageName, appName, title, text, result))
+        // 只记录元数据（不含标题、正文、验证码）；敏感内容连元数据也不记
+        if (d.record) app.records.add(Records.Record(System.currentTimeMillis(), sbn.key, sbn.packageName, appName, result, targets))
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {

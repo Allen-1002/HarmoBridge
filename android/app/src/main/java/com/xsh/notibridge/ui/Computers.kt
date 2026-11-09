@@ -149,9 +149,10 @@ fun ComputersPanel(onPaired: () -> Unit = {}) {
                     PendingUnpair.flush(app.store, c.macId, true) { _, r ->
                         main.post {
                             val msg = when (r) {
-                                UnpairOutcome.DELIVERED, UnpairOutcome.NOT_PAIRED -> "${c.macName} 已同步取消配对"
+                                UnpairOutcome.DELIVERED -> "${c.macName} 已同步取消配对"
+                                UnpairOutcome.NOT_PAIRED -> "${c.macName} 一直没有确认取消配对，请在电脑上检查并手动删除这台手机"
                                 UnpairOutcome.OLD_VERSION -> "${c.macName} 的版本较旧，请在电脑上手动取消配对"
-                                UnpairOutcome.OFFLINE -> "${c.macName} 不在线，下次连上时自动通知它取消配对"
+                                UnpairOutcome.OFFLINE -> "${c.macName} 不在线或暂时无法确认，下次连上时自动通知它取消配对"
                             }
                             Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
                         }
@@ -256,7 +257,7 @@ private fun PairDialog(t: PairTarget, onDismiss: () -> Unit, onDone: () -> Unit)
                     success != null -> Text("已与 ${success!!.macName}（${success!!.platformLabel}）配对。手机上的通知会加密同步到这台电脑。")
                     state == LinkState.AWAITING_SAS -> {
                         Text("请确认电脑上显示的校验码与下面一致：")
-                        Text(sas.chunked(3).joinToString(" "), fontSize = 34.sp, fontWeight = FontWeight.Bold,
+                        Text(sas, fontSize = 34.sp, fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.align(Alignment.CenterHorizontally))
                         Hint("不一致说明有人在冒充电脑，请点“不一致”并重新配对。")
@@ -303,5 +304,6 @@ private fun describe(code: String): String = when (code) {
     "bad_pin" -> "配对码错误，请核对电脑上显示的配对码"
     "pairing_closed" -> "电脑未开启配对或配对码已过期，请在电脑上重新点“配对新手机”"
     "连接失败", "连接超时" -> "连不上电脑，确认电脑端已打开、和手机连着同一个 Wi-Fi"
+    "outdated" -> com.xsh.notibridge.core.OUTDATED_TEXT
     else -> com.xsh.notibridge.core.ERROR_TEXT[code] ?: code
 }

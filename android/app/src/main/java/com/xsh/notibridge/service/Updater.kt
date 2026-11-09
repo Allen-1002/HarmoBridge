@@ -57,6 +57,16 @@ object Updater {
         }
     }
 
+    private fun bytes(url: String): ByteArray {
+        val c = get(url)
+        try {
+            if (c.responseCode != 200) throw Exception("GitHub 返回 HTTP ${c.responseCode}")
+            return c.inputStream.use { it.readBytes() }
+        } finally {
+            c.disconnect()
+        }
+    }
+
     fun check(ctx: Context, force: Boolean): Info {
         cached(ctx)?.let { if (!force && System.currentTimeMillis() - it.checkedAt < INTERVAL_MS) return it }
         val r = UpdateCore.parseRelease(text(UpdateCore.LATEST_URL, "application/vnd.github+json"))
@@ -64,8 +74,17 @@ object Updater {
         val apk = r.asset(UpdateCore.androidAssetName(r.version))
         var sha: String? = null
         if (apk != null) {
-            r.asset(UpdateCore.SUMS_ASSET)?.let { s ->
-                sha = runCatching { UpdateCore.parseSha256Sums(text(s.url))[apk.name] }.getOrNull()
+            // 1.1.0 起：SHA256SUMS.txt 必须带发布者的 Ed25519 签名，验证通过才信任里面的哈希
+            val sums = r.asset(UpdateCore.SUMS_ASSET)
+            val sig = r.asset(UpdateCore.SUMS_SIG_ASSET)
+            if (sums != null && sig != null) {
+                sha = runCatching {
+                    val data = bytes(sums.url)
+                    if (!UpdateCore.verifySumsSignature(data, bytes(sig.url))) {
+                        NotiApp.instance.store.log(false, "发布签名校验失败，忽略这个版本的安装包")
+                        null
+                    } else UpdateCore.parseSha256Sums(String(data, Charsets.UTF_8))[apk.name]
+                }.getOrNull()
             }
         }
         val info = Info(current, r.version, UpdateCore.isNewer(r.version, current), r.page,
@@ -80,7 +99,7 @@ object Updater {
     /** 下载并校验，返回已校验的 APK 文件。progress: 0..1 */
     fun download(ctx: Context, info: Info, progress: (Float) -> Unit): File {
         val url = info.apkUrl ?: throw Exception("这个版本没有安卓安装包")
-        val expect = info.sha ?: throw Exception("SHA256SUMS.txt 里没有安卓安装包的校验值，已停止更新")
+        val expect = info.sha ?: throw Exception("没有通过发布签名校验的安卓安装包校验值（缺少或无效的 SHA256SUMS.txt.sig），已停止更新")
         val dir = File(ctx.cacheDir, "updates").apply { deleteRecursively(); mkdirs() }
         val f = File(dir, UpdateCore.androidAssetName(info.latest))
         val c = get(url)

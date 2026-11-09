@@ -17,6 +17,8 @@ interface PhoneBackend {
     fun pendingUnpairs(): List<Computer> = emptyList()
     fun pendingKey(macId: String): ByteArray? = null
     fun clearPendingUnpair(macId: String) {}
+    /** 什么时候在手机上删除的（毫秒，0 = 未知），用来决定何时放弃通知 */
+    fun pendingSince(macId: String): Long = 0
 
     fun loadSettings(): SyncSettings
     /** 写入（保留 s.updatedAt） */

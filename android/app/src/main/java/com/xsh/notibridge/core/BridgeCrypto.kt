@@ -1,6 +1,5 @@
 package com.xsh.notibridge.core
 
-import java.math.BigInteger
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -10,13 +9,22 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * 与 docs/protocol.md “密码学约定”逐项一致（Mac BridgeCrypto.swift、Windows BridgeCrypto.cs、鸿蒙 Crypto.ets）。
- * 只用 JDK 自带的 SHA-256 / HMAC / AES-GCM；X25519 按 RFC 7748 实现（Android 8 起都能用，不依赖系统是否提供 XDH）。
+ * 与 docs/protocol.md “密码学约定”（协议 v2）逐项一致（Mac BridgeCrypto.swift、Windows BridgeCrypto.cs、鸿蒙 Crypto.ets）。
+ * SHA-256 / HMAC / AES-GCM 用 JDK；X25519 用 BouncyCastle（见 Cpace.kt）。
  */
 object BridgeCrypto {
-    private const val AAD = "HB1"
-    const val PAIR_INFO_PREFIX = "HarmoBridge-pair-v1|"
+    const val PROTOCOL_VERSION = 2
     private val rng = SecureRandom()
+
+    /** 消息方向：AAD 不同，把一方的消息反射回去也解不开。 */
+    enum class Direction(val aad: String) { TO_COMPUTER("NB2|p2c"), TO_PHONE("NB2|c2p") }
+
+    private val TRANSCRIPT_LABEL = u("NotiBridge-pair-v2")
+    private val INFO_PAIR_KEY = u("NotiBridge-v2 pair key")
+    private val INFO_CONFIRM_PHONE = u("NotiBridge-v2 confirm phone")
+    private val INFO_CONFIRM_COMPUTER = u("NotiBridge-v2 confirm computer")
+
+    fun u(s: String): ByteArray = s.toByteArray(Charsets.UTF_8)
 
     fun randomBytes(n: Int): ByteArray = ByteArray(n).also { rng.nextBytes(it) }
 
@@ -29,88 +37,13 @@ object BridgeCrypto {
 
     fun hex(b: ByteArray): String = b.joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
-    // ---------- X25519（RFC 7748） ----------
+    fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray =
+        Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }.doFinal(data)
 
-    private val P: BigInteger = BigInteger.valueOf(2).pow(255).subtract(BigInteger.valueOf(19))
-    private val A24: BigInteger = BigInteger.valueOf(121665)
-
-    class KeyPair(val priv: ByteArray, val pub: ByteArray)
-
-    fun generateX25519(): KeyPair {
-        val priv = randomBytes(32)
-        return KeyPair(priv, x25519(priv, basePoint()))
-    }
-
-    fun publicFromPrivate(priv: ByteArray): ByteArray = x25519(priv, basePoint())
-
-    private fun basePoint(): ByteArray = ByteArray(32).also { it[0] = 9 }
-
-    private fun decodeLE(b: ByteArray): BigInteger = BigInteger(1, b.reversedArray())
-
-    private fun encodeLE(x: BigInteger): ByteArray {
-        val be = x.toByteArray()
-        val out = ByteArray(32)
-        // BigInteger.toByteArray 是大端、可能带符号位前导 0
-        for (i in 0 until minOf(32, be.size)) {
-            out[i] = be[be.size - 1 - i]
-        }
-        return out
-    }
-
-    /** X25519(k, u)。 */
-    fun x25519(scalar: ByteArray, uBytes: ByteArray): ByteArray {
-        require(scalar.size == 32 && uBytes.size == 32) { "bad key length" }
-        val k = scalar.copyOf()
-        k[0] = (k[0].toInt() and 248).toByte()
-        k[31] = ((k[31].toInt() and 127) or 64).toByte()
-        val kn = decodeLE(k)
-        val u = uBytes.copyOf()
-        u[31] = (u[31].toInt() and 127).toByte()
-        val x1 = decodeLE(u).mod(P)
-        var x2 = BigInteger.ONE
-        var z2 = BigInteger.ZERO
-        var x3 = x1
-        var z3 = BigInteger.ONE
-        var swap = 0
-        for (t in 254 downTo 0) {
-            val kt = if (kn.testBit(t)) 1 else 0
-            swap = swap xor kt
-            if (swap == 1) {
-                var tmp = x2; x2 = x3; x3 = tmp
-                tmp = z2; z2 = z3; z3 = tmp
-            }
-            swap = kt
-            val a = x2.add(z2).mod(P)
-            val aa = a.multiply(a).mod(P)
-            val b = x2.subtract(z2).mod(P)
-            val bb = b.multiply(b).mod(P)
-            val e = aa.subtract(bb).mod(P)
-            val c = x3.add(z3).mod(P)
-            val d = x3.subtract(z3).mod(P)
-            val da = d.multiply(a).mod(P)
-            val cb = c.multiply(b).mod(P)
-            x3 = da.add(cb).mod(P).pow(2).mod(P)
-            z3 = x1.multiply(da.subtract(cb).mod(P).pow(2)).mod(P)
-            x2 = aa.multiply(bb).mod(P)
-            z2 = e.multiply(aa.add(A24.multiply(e))).mod(P)
-        }
-        if (swap == 1) {
-            x2 = x3
-            z2 = z3
-        }
-        val r = x2.multiply(z2.modPow(P.subtract(BigInteger.valueOf(2)), P)).mod(P)
-        val out = encodeLE(r)
-        require(out.any { it.toInt() != 0 }) { "low-order point" }
-        return out
-    }
-
-    // ---------- HKDF-SHA256（RFC 5869） ----------
-
+    /** HKDF-SHA256（RFC 5869） */
     fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, len: Int): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(if (salt.isEmpty()) ByteArray(32) else salt, "HmacSHA256"))
-        val prk = mac.doFinal(ikm)
-        mac.init(SecretKeySpec(prk, "HmacSHA256"))
+        val prk = hmacSha256(if (salt.isEmpty()) ByteArray(32) else salt, ikm)
+        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(prk, "HmacSHA256")) }
         val out = java.io.ByteArrayOutputStream()
         var t = ByteArray(0)
         var i = 1
@@ -125,33 +58,61 @@ object BridgeCrypto {
         return out.toByteArray().copyOf(len)
     }
 
-    /** 配对密钥：HKDF(X25519 共享密钥, SHA-256(phonePub‖macPub), "HarmoBridge-pair-v1|"+PIN)。 */
-    fun derivePairKey(priv: ByteArray, phonePub: ByteArray, macPub: ByteArray, pin: String): ByteArray {
-        val shared = x25519(priv, macPub)
-        val salt = sha256(phonePub + macPub)
-        return hkdfSha256(shared, salt, (PAIR_INFO_PREFIX + pin).toByteArray(Charsets.UTF_8), 32)
+    /** 配对双方都知道的公开信息（字符串按线路上的原样）。 */
+    data class PairingContext(
+        val deviceId: String, val deviceName: String, val phonePlatform: String,
+        val macId: String, val macName: String, val macPlatform: String,
+        val phoneNonce: ByteArray, val macNonce: ByteArray,
+    ) {
+        val sid: ByteArray get() = phoneNonce + macNonce
+        val ci: ByteArray get() = Cpace.lvCat(u(deviceId), u(macId))
+        fun generator(pin: String): ByteArray = Cpace.generator(u(pin), ci, sid)
+        fun transcript(ya: ByteArray, yb: ByteArray): ByteArray = Cpace.lvCat(
+            TRANSCRIPT_LABEL, sid, u(deviceId), u(deviceName), u(phonePlatform), u(macId), u(macName), u(macPlatform), ya, yb,
+        )
     }
 
-    /** 校验码：salt 前 3 字节大写十六进制。 */
-    fun sas(phonePub: ByteArray, macPub: ByteArray): String =
-        hex(sha256(phonePub + macPub).copyOf(3)).uppercase()
+    class PairingKeys(
+        val pairKey: ByteArray, val transcriptHash: ByteArray,
+        val confirmPhone: ByteArray, val confirmComputer: ByteArray, val sas: String,
+    )
+
+    fun pairingKeys(k: ByteArray, ctx: PairingContext, ya: ByteArray, yb: ByteArray): PairingKeys {
+        val th = sha256(ctx.transcript(ya, yb))
+        val kcP = hkdfSha256(k, th, INFO_CONFIRM_PHONE, 32)
+        val kcC = hkdfSha256(k, th, INFO_CONFIRM_COMPUTER, 32)
+        return PairingKeys(
+            hkdfSha256(k, th, INFO_PAIR_KEY, 32), th,
+            hmacSha256(kcP, th + u("phone")), hmacSha256(kcC, th + u("computer")), sas(th),
+        )
+    }
+
+    /** 8 位数字校验码：th 前 5 字节大端整数 mod 10^8，显示为 "1234 5678"。 */
+    fun sas(th: ByteArray): String {
+        var n = 0L
+        for (i in 0 until 5) n = (n shl 8) or (th[i].toLong() and 0xff)
+        val s = "%08d".format(n % 100_000_000L)
+        return s.substring(0, 4) + " " + s.substring(4)
+    }
+
+    fun constantTimeEqual(a: ByteArray, b: ByteArray): Boolean = MessageDigest.isEqual(a, b)
 
     // ---------- AES-256-GCM ----------
 
-    fun seal(key: ByteArray, plaintext: String): String {
+    fun seal(key: ByteArray, plaintext: String, dir: Direction): String {
         val iv = randomBytes(12)
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
-        c.updateAAD(AAD.toByteArray(Charsets.UTF_8))
-        return b64(iv + c.doFinal(plaintext.toByteArray(Charsets.UTF_8)))
+        c.updateAAD(u(dir.aad))
+        return b64(iv + c.doFinal(u(plaintext)))
     }
 
-    fun open(key: ByteArray, box: String): String {
+    fun open(key: ByteArray, box: String, dir: Direction): String {
         val all = fromB64(box)
         require(all.size > 28) { "box too short" }
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, all, 0, 12))
-        c.updateAAD(AAD.toByteArray(Charsets.UTF_8))
+        c.updateAAD(u(dir.aad))
         return String(c.doFinal(all, 12, all.size - 12), Charsets.UTF_8)
     }
 }

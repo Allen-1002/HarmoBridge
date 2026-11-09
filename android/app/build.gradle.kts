@@ -69,6 +69,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.5.1")
+    // X25519（CPace 配对）与 Ed25519（更新签名校验）：常量时间实现，支持 Android 8（API 26）
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")

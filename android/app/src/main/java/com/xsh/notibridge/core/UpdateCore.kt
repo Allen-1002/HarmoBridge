@@ -1,5 +1,6 @@
 package com.xsh.notibridge.core
 
+import org.bouncycastle.math.ec.rfc8032.Ed25519
 import org.json.JSONObject
 
 /** 自动更新的纯逻辑，与 Mac UpdateCore.swift / Windows UpdateCore.cs 一致。 */
@@ -8,6 +9,24 @@ object UpdateCore {
     const val RELEASES_PAGE = "https://github.com/Allen-1002/NotiBridge/releases/latest"
     const val USER_AGENT = "NotiBridge-Updater"
     const val SUMS_ASSET = "SHA256SUMS.txt"
+    const val SUMS_SIG_ASSET = "SHA256SUMS.txt.sig"
+
+    /**
+     * 发布签名公钥（Ed25519，32 字节原始格式，Base64）。私钥只在发布者电脑上
+     * （~/.config/notibridge/release-signing-ed25519.pem，scripts/sign_release.sh 使用）。
+     * 与 Mac UpdateCore.swift、Windows UpdateCore.cs 中的值必须相同。
+     */
+    const val RELEASE_PUBLIC_KEY_B64 = "+wkZaT1HzXMHhcMF6xz67byo2x0iNeXMoL4PSO1ApQo="
+
+    /** 校验 SHA256SUMS.txt 的 Ed25519 签名（.sig 内容为 Base64 的 64 字节签名，允许末尾换行） */
+    fun verifySumsSignature(sums: ByteArray, signatureFile: ByteArray, publicKeyB64: String = RELEASE_PUBLIC_KEY_B64): Boolean =
+        try {
+            val sig = BridgeCrypto.fromB64(String(signatureFile, Charsets.UTF_8).trim())
+            val pk = BridgeCrypto.fromB64(publicKeyB64)
+            sig.size == 64 && pk.size == 32 && Ed25519.verify(sig, 0, pk, 0, sums, 0, sums.size)
+        } catch (e: IllegalArgumentException) {
+            false
+        }
 
     fun androidAssetName(version: String) = "NotiBridge-$version-Android.apk"
 
@@ -67,17 +86,20 @@ object UpdateCore {
         return Release(tag.trim().removePrefix("v").removePrefix("V"), o.str("html_url") ?: RELEASES_PAGE, o.optString("body"), assets)
     }
 
-    /** 更新说明摘要：取“更新内容”一节，去掉表格和 Markdown 符号。 */
+    /** 更新说明摘要：正文第一行的重点提示（例如“安全更新，必须重新配对”）+“更新内容”一节，去掉表格和 Markdown 符号。 */
     fun notesSnippet(body: String, maxChars: Int = 400): String {
-        var lines = body.lines()
-        val start = lines.indexOfFirst { it.startsWith("#") && it.contains("更新内容") }
+        val all = body.lines()
+        var lines = all
+        val headline = all.map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("|") && !it.startsWith("---") }
+        val start = all.indexOfFirst { it.startsWith("#") && it.contains("更新内容") }
         if (start >= 0) {
-            val rest = lines.drop(start + 1)
+            val rest = all.drop(start + 1)
             val end = rest.indexOfFirst { it.startsWith("## ") }.let { if (it < 0) rest.size else it }
             lines = rest.take(end)
+            if (headline != null && lines.none { it.trim() == headline }) lines = listOf(headline) + lines
         }
         val cleaned = lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("|") }.joinToString("\n") { l ->
-            var s = l.trimStart('#')
+            var s = l.trimStart('#', '>').trim()
             if (s.startsWith("- ") || s.startsWith("* ")) s = "• " + s.substring(2)
             s.replace("**", "").replace("`", "").trim()
         }

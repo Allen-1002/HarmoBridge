@@ -24,8 +24,15 @@ interface LinkListener {
     fun onPaired(c: Computer) {}
 }
 
+/** 对方是 1.0.x（协议 v1） */
+const val OUTDATED_TEXT = "对方版本过旧，请把电脑和手机都更新到 1.1.0"
+/** 电脑回 unknown_device：v2 起只提示，不自动删除（这个回复未经认证，局域网上任何人都能伪造） */
+const val UNKNOWN_DEVICE_TEXT = "这台电脑可能已取消配对，请重新配对或手动删除"
+
 val ERROR_TEXT = mapOf(
-    "unknown_device" to "电脑不认识这台手机（未配对或已在电脑上取消配对），请重新配对",
+    "unknown_device" to UNKNOWN_DEVICE_TEXT,
+    "upgrade_required" to OUTDATED_TEXT,
+    "bad_point" to "配对数据无效，请重试",
     "pairing_closed" to "电脑未开启配对或配对码已过期，请在电脑上点“配对新手机”",
     "bad_pin" to "配对码错误",
     "auth_failed" to "认证失败：密钥不匹配，请重新配对",
@@ -45,6 +52,7 @@ class ComputerLink(
     private var target: Computer? = null,
 ) {
     companion object {
+        const val PHONE_PLATFORM = "android"
         val http: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -64,8 +72,8 @@ class ComputerLink(
 
     // 配对临时数据
     private var pairPin = ""
-    private var pairKeys: BridgeCrypto.KeyPair? = null
-    private var pendingKey: ByteArray? = null
+    private var pairNonce: ByteArray? = null
+    private var pairKeys: BridgeCrypto.PairingKeys? = null
     private var pendingMac: Computer? = null
 
     // 会话
@@ -73,6 +81,8 @@ class ComputerLink(
     private var phoneNonce = ""
     private var sid = ""
     private var seq = 0
+    /** 电脑发来的最后一个 cseq（防重放：必须严格递增） */
+    private var lastCseq = 0
     private var ping: ScheduledFuture<*>? = null
     private var reconnect: ScheduledFuture<*>? = null
     private var retries = 0
@@ -97,22 +107,26 @@ class ComputerLink(
         }
         stopNow()
         pairPin = pin
-        val kp = BridgeCrypto.generateX25519()
-        pairKeys = kp
+        val nonce = BridgeCrypto.randomBytes(16)
+        pairNonce = nonce
+        pairKeys = null
         pendingMac = Computer(host, port, "", "", "mac")
         open(host, port, LinkState.PAIRING) {
             sendFrame(Envelope("pair_req").apply {
+                v = BridgeCrypto.PROTOCOL_VERSION
                 deviceId = backend.deviceId
                 deviceName = backend.deviceName
-                pub = BridgeCrypto.b64(kp.pub)
+                platform = PHONE_PLATFORM
+                this.nonce = BridgeCrypto.b64(nonce)
             })
         }
     }
 
+    /** 用户确认两端校验码一致后：发出确认码（电脑核对通过才保存配对） */
     fun confirmSas() = post {
-        val k = pendingKey
+        val k = pairKeys
         if (state != LinkState.AWAITING_SAS || k == null) return@post
-        sendFrame(Envelope("pair_confirm").apply { box = BridgeCrypto.seal(k, "pair-confirm-phone") })
+        sendFrame(Envelope("pair_confirm").apply { confirm = BridgeCrypto.b64(k.confirmPhone) })
         setState(LinkState.PAIRING, "等待电脑确认")
     }
 
@@ -133,7 +147,7 @@ class ComputerLink(
         autoReconnect = foreground
         phoneNonce = BridgeCrypto.b64(BridgeCrypto.randomBytes(16))
         open(mac.host, mac.port, LinkState.AUTHENTICATING) {
-            sendFrame(Envelope("hello").apply { deviceId = backend.deviceId; nonce = phoneNonce })
+            sendFrame(Envelope("hello").apply { v = BridgeCrypto.PROTOCOL_VERSION; deviceId = backend.deviceId; nonce = phoneNonce })
         }
     }
 
@@ -146,7 +160,7 @@ class ComputerLink(
         autoReconnect = false
         phoneNonce = BridgeCrypto.b64(BridgeCrypto.randomBytes(16))
         open(mac.host, mac.port, LinkState.AUTHENTICATING) {
-            sendFrame(Envelope("hello").apply { deviceId = backend.deviceId; nonce = phoneNonce })
+            sendFrame(Envelope("hello").apply { v = BridgeCrypto.PROTOCOL_VERSION; deviceId = backend.deviceId; nonce = phoneNonce })
         }
     }
 
@@ -254,7 +268,7 @@ class ComputerLink(
     /** 连不上已配对的电脑：可能换了 IP，按电脑 ID 重新查找。 */
     private fun onConnectFailed() {
         val mac = target ?: return
-        if (key == null || pairKeys != null || unpairOnly) return
+        if (key == null || pairNonce != null || unpairOnly) return
         backend.rediscover(mac) { moved ->
             post {
                 if (moved && state == LinkState.ERROR && target?.macId == mac.macId) {
@@ -279,7 +293,7 @@ class ComputerLink(
                 "challenge" -> onChallenge(env)
                 "auth_ok" -> onAuthOk(env)
                 "msg" -> onMsg(env)
-                "error" -> onError(env.code ?: "", env.macId)
+                "error" -> onError(env.code ?: "")
                 else -> listener.onLog(false, "未知帧类型 ${env.t}")
             }
         } catch (e: Exception) {
@@ -288,28 +302,52 @@ class ComputerLink(
         }
     }
 
+    /** v2：收到电脑的 nonce 和 Yb，按 PIN 算 CPace 生成元、Ya 和共享点 K，发 pair_key，显示 SAS */
     private fun onPairChallenge(env: Envelope) {
-        val kp = pairKeys
-        val pubB64 = env.pub
-        if (kp == null || pubB64 == null) {
+        val nonce = pairNonce
+        if (nonce == null || state != LinkState.PAIRING || pairKeys != null) {
             fail("配对数据缺失")
             return
         }
-        val macPub = BridgeCrypto.fromB64(pubB64)
-        pendingKey = BridgeCrypto.derivePairKey(kp.priv, kp.pub, macPub, pairPin)
+        if (env.v != BridgeCrypto.PROTOCOL_VERSION) {
+            outdated()
+            return
+        }
+        val macNonce = env.nonce?.let { runCatching { BridgeCrypto.fromB64(it) }.getOrNull() }
+        val yb = env.pub?.let { runCatching { BridgeCrypto.fromB64(it) }.getOrNull() }
+        if (macNonce?.size != 16 || yb?.size != 32) {
+            fail("电脑的配对数据不完整")
+            return
+        }
+        val ctx = BridgeCrypto.PairingContext(
+            backend.deviceId, backend.deviceName, PHONE_PLATFORM,
+            env.macId ?: "", env.macName ?: "", env.platform ?: "", nonce, macNonce,
+        )
+        val ya = BridgeCrypto.randomBytes(32)
+        val keys = try {
+            val yaPub = Cpace.scalarMultVfy(ya, ctx.generator(pairPin))
+            val k = Cpace.scalarMultVfy(ya, yb)
+            sendFrame(Envelope("pair_key").apply { pub = BridgeCrypto.b64(yaPub) })
+            BridgeCrypto.pairingKeys(k, ctx, yaPub, yb)
+        } catch (e: Cpace.LowOrderPoint) {
+            fail("电脑发来的配对公钥无效")
+            return
+        }
+        pairKeys = keys
         pendingMac = pendingMac?.copy(macId = env.macId ?: "", macName = env.macName ?: "电脑", platform = env.platform ?: "mac")
-        val code = BridgeCrypto.sas(kp.pub, macPub)
-        listener.onSas(code)
-        setState(LinkState.AWAITING_SAS, "请核对校验码 $code")
+        listener.onSas(keys.sas)
+        setState(LinkState.AWAITING_SAS, "请核对校验码 ${keys.sas}")
     }
 
+    /** 核对电脑的确认码：通过才保存配对密钥（冒充电脑、不知道 PIN 的一方算不出来） */
     private fun onPairOk(env: Envelope) {
-        val k = pendingKey
-        val b = env.box
-        if (k == null || b == null || BridgeCrypto.open(k, b) != "pair-confirm-mac") {
+        val keys = pairKeys
+        val c = env.confirm?.let { runCatching { BridgeCrypto.fromB64(it) }.getOrNull() }
+        if (keys == null || c == null || !BridgeCrypto.constantTimeEqual(c, keys.confirmComputer)) {
             fail("电脑的配对确认无效")
             return
         }
+        val k = keys.pairKey
         var mac = pendingMac
         if (mac != null) {
             if (mac.macId.isEmpty()) mac = mac.copy(macId = "host-${mac.host}")
@@ -330,18 +368,23 @@ class ComputerLink(
             fail("认证数据缺失")
             return
         }
+        if (env.v != BridgeCrypto.PROTOCOL_VERSION) {
+            outdated()
+            return
+        }
         sid = n
-        sendFrame(Envelope("auth").apply { box = BridgeCrypto.seal(k, "auth|$phoneNonce|$sid") })
+        sendFrame(Envelope("auth").apply { box = BridgeCrypto.seal(k, "auth|$phoneNonce|$sid", BridgeCrypto.Direction.TO_COMPUTER) })
     }
 
     private fun onAuthOk(env: Envelope) {
         val k = key
         val b = env.box
-        if (k == null || b == null || BridgeCrypto.open(k, b) != "ok|$sid|$phoneNonce") {
+        if (k == null || b == null || BridgeCrypto.open(k, b, BridgeCrypto.Direction.TO_PHONE) != "ok|$sid|$phoneNonce") {
             fail("电脑身份校验失败")
             return
         }
         seq = 0
+        lastCseq = 0
         if (unpairOnly) {
             setState(LinkState.ONLINE, "已认证，正在通知电脑取消配对")
             sendInner(inner("unpair"))
@@ -375,11 +418,18 @@ class ComputerLink(
     private fun onMsg(env: Envelope) {
         val k = key ?: return
         val b = env.box ?: return
-        val o = JSONObject(BridgeCrypto.open(k, b))
+        val o = JSONObject(BridgeCrypto.open(k, b, BridgeCrypto.Direction.TO_PHONE))
         if (o.optString("sid") != sid) {
             listener.onLog(false, "忽略会话不匹配的消息")
             return
         }
+        // v2 防重放：电脑发来的每条消息 cseq 必须严格递增，重复或乱序的（尤其 unpair、settings）一律丢弃
+        val cseq = if (o.has("cseq")) o.optInt("cseq", 0) else 0
+        if (cseq <= lastCseq) {
+            listener.onLog(false, "忽略重放或乱序的电脑消息 cseq=$cseq")
+            return
+        }
+        lastCseq = cseq
         when (o.optString("kind")) {
             "ack" -> listener.onAck(o.optInt("seq"), o.optString("result"))
             "settings" -> applyRemoteSettings(o)
@@ -398,12 +448,11 @@ class ComputerLink(
         listener.onUnpairedByComputer(mac)
     }
 
-    private fun onError(code: String, macId: String?) {
-        val t = target
-        if (code == "unknown_device" && !unpairOnly && pairKeys == null && t != null && macId != null &&
-            macId == t.macId && backend.findComputer(macId) != null
-        ) {
-            onUnpairedByComputer()
+    private fun onError(code: String) {
+        // v2：unknown_device 未经认证，只提示，不自动删除这台电脑（见 docs/protocol.md “取消配对”）
+        if (code == "upgrade_required" || (code == "bad_pair_req" && pairNonce != null && pairKeys == null)) {
+            // 旧版电脑不认识 v2 的 pair_req（缺 pub）会回 bad_pair_req
+            outdated()
             return
         }
         listener.onLog(false, "电脑返回错误 $code：${ERROR_TEXT[code] ?: "未知错误"}")
@@ -411,9 +460,16 @@ class ComputerLink(
         fail(code)
     }
 
+    /** 对方是 1.0.x（协议 v1）：停止重连并提示双方都更新 */
+    private fun outdated() {
+        autoReconnect = false
+        listener.onLog(false, OUTDATED_TEXT)
+        fail("outdated")
+    }
+
     private fun sendInner(o: JSONObject) {
         val k = key ?: return
-        sendFrame(Envelope("msg").apply { box = BridgeCrypto.seal(k, o.toString()) })
+        sendFrame(Envelope("msg").apply { box = BridgeCrypto.seal(k, o.toString(), BridgeCrypto.Direction.TO_COMPUTER) })
     }
 
     private fun sendFrame(env: Envelope) {
@@ -464,8 +520,8 @@ class ComputerLink(
 
     private fun clearPairing() {
         pairPin = ""
+        pairNonce = null
         pairKeys = null
-        pendingKey = null
     }
 
     private fun closeSocket() {

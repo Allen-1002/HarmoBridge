@@ -60,7 +60,7 @@ class InteropTest {
         val pairLink = ComputerLink(be, listener)
         pairLink.startPairing("127.0.0.1", port!!, pin)
         waitFor(LinkState.AWAITING_SAS)
-        assertEquals(6, sas.length)
+        assertTrue("SAS 应为 8 位数字（1234 5678）", Regex("^\\d{4} \\d{4}$").matches(sas))
         pairLink.confirmSas()
         waitFor(LinkState.IDLE)
         val pc = be.computers["pc-interop"]?.first
@@ -97,5 +97,25 @@ class InteropTest {
         assertNull(be.findComputer("pc-interop"))
         assertEquals(listOf("InteropPC"), be.notices)
         link.dispose()
+
+        // v2：电脑离线删除配对后，手机收到未认证的 unknown_device 只提示，不自动删除这台电脑
+        val pin2 = File(dir, "server.log").readLines().last { it.startsWith("PIN ") }.substring(4).trim()
+        val pair2 = ComputerLink(be, listener)
+        pair2.startPairing("127.0.0.1", port, pin2)
+        waitFor(LinkState.AWAITING_SAS)
+        pair2.confirmSas()
+        waitFor(LinkState.IDLE)
+        pair2.dispose()
+        val pc2 = be.findComputer("pc-interop")!!
+        File(dir, "drop-keys").createNewFile()
+        Thread.sleep(500)
+        val link2 = ComputerLink(be, listener, foreground = false, target = pc2)
+        link2.connect()
+        var sawError = false
+        val deadline3 = System.currentTimeMillis() + 10000
+        while (!sawError && System.currentTimeMillis() < deadline3) sawError = states.poll(1, TimeUnit.SECONDS) == LinkState.ERROR
+        assertTrue(sawError)
+        assertTrue("unknown_device 不能让手机自动删除电脑", be.findComputer("pc-interop") != null)
+        link2.dispose()
     }
 }
