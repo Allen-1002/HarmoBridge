@@ -52,6 +52,10 @@ interface LinkParams {
   platform: string;
 }
 
+interface OnboardingParams {
+  startStep: number;
+}
+
 @Entry
 @Component
 struct Index {
@@ -203,6 +207,19 @@ struct Index {
     this.getUIContext().getRouter().pushUrl({ url: url });
   }
 
+  /** “继续设置”：从第一个还没完成的步骤开始（2 通知、3 蓝牙、4 电脑），不从欢迎页重来 */
+  private continueSetup(): void {
+    let start = 4;
+    if (!this.status.notificationReady) {
+      start = 2;
+    } else if (!this.status.bluetoothReady) {
+      start = 3;
+    }
+    this.getUIContext().getRouter().pushUrl({
+      url: 'pages/OnboardingPage', params: { startStep: start } as OnboardingParams
+    });
+  }
+
   private missingSteps(): number {
     let n = 0;
     if (!this.status.notificationReady) {
@@ -233,7 +250,7 @@ struct Index {
           .fontColor('#1E3A8A')
           .backgroundColor(Color.White)
           .margin({ top: 16 })
-          .onClick(() => this.go('pages/OnboardingPage'))
+          .onClick(() => this.continueSetup())
       } else {
         Row() {
           Column() {

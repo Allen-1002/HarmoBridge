@@ -59,9 +59,10 @@ private val STEPS = listOf(
 )
 
 @Composable
-fun OnboardingScreen(resumeTick: Int, onFinish: () -> Unit) {
+fun OnboardingScreen(resumeTick: Int, startStep: Int = 0, onFinish: () -> Unit) {
     val ctx = LocalContext.current
-    var step by remember { mutableIntStateOf(0) }
+    // “继续设置”从第一个还没完成的步骤开始，不再从欢迎页重来
+    var step by remember { mutableIntStateOf(startStep.coerceIn(0, STEPS.size - 1)) }
     var mode by remember { mutableStateOf(UiPrefs.useMode) }
     rememberDataTick()
     @Suppress("UNUSED_EXPRESSION") resumeTick // 从系统设置回来时刷新权限状态

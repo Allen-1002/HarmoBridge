@@ -39,6 +39,12 @@ struct OnboardingPage {
   }
 
   aboutToAppear(): void {
+    // 从首页“继续设置”进来时直接跳到第一个没完成的步骤
+    const params = this.getUIContext().getRouter().getParams() as Record<string, Object> | undefined;
+    if (params !== undefined && typeof params['startStep'] === 'number') {
+      const s = params['startStep'] as number;
+      this.step = Math.max(0, Math.min(STEPS.length - 1, s));
+    }
     this.mode = getUseMode(this.ctx());
     this.checkGrant();
   }

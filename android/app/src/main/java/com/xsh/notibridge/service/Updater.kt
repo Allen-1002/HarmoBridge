@@ -1,6 +1,9 @@
 package com.xsh.notibridge.service
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.pm.PackageInstaller
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
@@ -152,7 +155,12 @@ object Updater {
         val flag = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val mine = signatures(ctx.packageManager.getPackageInfo(ctx.packageName, flag))
         val theirs = signatures(ctx.packageManager.getPackageArchiveInfo(apk.path, flag))
-        return theirs.isNotEmpty() && mine.intersect(theirs).isNotEmpty()
+        // 部分系统读不出安装包的签名（返回空）：这时交给系统安装器判断，签名不同系统会拒绝安装
+        if (theirs.isEmpty()) {
+            NotiApp.instance.store.log(false, "读不出安装包的签名，交给系统安装器校验")
+            return true
+        }
+        return mine.intersect(theirs).isNotEmpty()
     }
 
     fun canInstall(ctx: Context): Boolean =
@@ -163,10 +171,72 @@ object Updater {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
+    /**
+     * 安装下载好的 APK。优先用 PackageInstaller 会话（系统弹出确认安装界面，安装结果会回调），
+     * 部分系统上 ACTION_VIEW 打开安装包没有任何反应；会话失败时再退回 ACTION_VIEW。
+     */
     fun install(ctx: Context, apk: File) {
+        val store = NotiApp.instance.store
+        try {
+            val pi = ctx.packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            params.setAppPackageName(ctx.packageName)
+            if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+            val id = pi.createSession(params)
+            pi.openSession(id).use { s ->
+                apk.inputStream().use { ins ->
+                    s.openWrite("base.apk", 0, apk.length()).use { out ->
+                        ins.copyTo(out)
+                        s.fsync(out)
+                    }
+                }
+                val intent = Intent(ctx, InstallResultReceiver::class.java).setAction(InstallResultReceiver.ACTION)
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+                s.commit(PendingIntent.getBroadcast(ctx, id, intent, flags).intentSender)
+            }
+            store.log(true, "已提交安装，等待确认")
+        } catch (e: Exception) {
+            store.log(false, "系统安装接口失败（${e.message}），改用安装包方式打开")
+            installViaIntent(ctx, apk)
+        }
+    }
+
+    fun installViaIntent(ctx: Context, apk: File) {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", apk)
         ctx.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /** 最近一次安装结果（失败原因），界面显示用 */
+    @Volatile var lastInstallError: String = ""
+
+    /** PackageInstaller 的安装结果：需要用户确认时打开系统确认界面；失败时记录原因。 */
+    class InstallResultReceiver : BroadcastReceiver() {
+        companion object { const val ACTION = "com.xsh.notibridge.INSTALL_RESULT" }
+
+        override fun onReceive(context: Context, intent: Intent) {
+            val store = NotiApp.instance.store
+            when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+                PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                    @Suppress("DEPRECATION")
+                    val confirm = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                    else intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+                    if (confirm != null) context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+                PackageInstaller.STATUS_SUCCESS -> store.log(true, "新版本已安装")
+                else -> {
+                    val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "状态 $status"
+                    lastInstallError = when (status) {
+                        PackageInstaller.STATUS_FAILURE_ABORTED -> "已取消安装"
+                        PackageInstaller.STATUS_FAILURE_CONFLICT, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
+                            "安装失败：安装包签名与手机上的 NotiBridge 不一致，请卸载后从 GitHub 安装一次（$msg）"
+                        PackageInstaller.STATUS_FAILURE_STORAGE -> "安装失败：手机存储空间不足"
+                        else -> "安装失败：$msg"
+                    }
+                    store.log(false, lastInstallError)
+                }
+            }
+        }
     }
 
     fun openPage(ctx: Context, url: String) {

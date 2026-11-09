@@ -16,6 +16,7 @@ import com.xsh.notibridge.service.NotifyListener
 class MainActivity : ComponentActivity() {
     private var resumeTick by mutableIntStateOf(0)
     private var onboarding by mutableStateOf(false)
+    private var onboardingStart by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,12 +25,21 @@ class MainActivity : ComponentActivity() {
         setContent {
             NotiTheme {
                 if (onboarding) {
-                    OnboardingScreen(resumeTick) { onboarding = false }
+                    OnboardingScreen(resumeTick, onboardingStart) { onboarding = false }
                 } else {
-                    MainScreen(resumeTick) { onboarding = true; UiPrefs.onboarded = false }
+                    MainScreen(resumeTick,
+                        onRerunOnboarding = { onboardingStart = 0; onboarding = true; UiPrefs.onboarded = false },
+                        onContinueSetup = { onboardingStart = firstUnfinishedStep(); onboarding = true })
                 }
             }
         }
+    }
+
+    /** 引导里第一个还没完成的必需步骤：2 = 通知使用权，4 = 连接电脑 */
+    private fun firstUnfinishedStep(): Int = when {
+        !NotifyListener.isGranted(this) -> 2
+        NotiApp.instance.store.pairedComputers().isEmpty() -> 4
+        else -> 3
     }
 
     override fun onResume() {

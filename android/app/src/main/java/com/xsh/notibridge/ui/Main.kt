@@ -71,7 +71,7 @@ private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(resumeTick: Int, onRerunOnboarding: () -> Unit) {
+fun MainScreen(resumeTick: Int, onRerunOnboarding: () -> Unit, onContinueSetup: () -> Unit = onRerunOnboarding) {
     var tab by remember { mutableIntStateOf(0) }
     var route by remember { mutableStateOf("") }
     val ctx = LocalContext.current
@@ -110,7 +110,7 @@ fun MainScreen(resumeTick: Int, onRerunOnboarding: () -> Unit) {
         }) { pad ->
             Box(Modifier.padding(pad).fillMaxSize()) {
                 when (tab) {
-                    0 -> HomeTab(resumeTick, onOpen = { route = it }, onRerunOnboarding = onRerunOnboarding)
+                    0 -> HomeTab(resumeTick, onOpen = { route = it }, onContinueSetup = onContinueSetup)
                     1 -> NotificationsTab()
                     else -> SettingsTab(resumeTick, onOpen = { route = it }, onRerunOnboarding = onRerunOnboarding)
                 }
@@ -150,7 +150,7 @@ private fun updateSettings(change: (SyncSettings) -> Unit) {
 }
 
 @Composable
-private fun HomeTab(resumeTick: Int, onOpen: (String) -> Unit, onRerunOnboarding: () -> Unit) {
+private fun HomeTab(resumeTick: Int, onOpen: (String) -> Unit, onContinueSetup: () -> Unit) {
     val ctx = LocalContext.current
     val app = NotiApp.instance
     rememberDataTick()
@@ -168,7 +168,7 @@ private fun HomeTab(resumeTick: Int, onOpen: (String) -> Unit, onRerunOnboarding
                 Column {
                     Text("还差 $missing 步完成设置", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     Text("完成后，手机通知会自动同步到你的电脑", color = Color.White.copy(alpha = 0.9f), modifier = Modifier.padding(top = 6.dp))
-                    Button(onClick = onRerunOnboarding, modifier = Modifier.padding(top = 14.dp),
+                    Button(onClick = onContinueSetup, modifier = Modifier.padding(top = 14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Accent)) { Text("继续设置") }
                 }
             } else {
@@ -289,6 +289,7 @@ private fun SettingsTab(resumeTick: Int, onOpen: (String) -> Unit, onRerunOnboar
             Updater.openInstallPermission(ctx)
             return
         }
+        Updater.lastInstallError = ""
         downloaded?.let { if (it.exists()) { Updater.install(ctx, it); return } }
         progress = 0f
         updateError = ""
@@ -369,6 +370,7 @@ private fun SettingsTab(resumeTick: Int, onOpen: (String) -> Unit, onRerunOnboar
                 when {
                     checking -> "正在检查…"
                     updateError.isNotEmpty() -> updateError
+                    Updater.lastInstallError.isNotEmpty() && downloaded != null -> Updater.lastInstallError
                     u == null -> "当前版本 ${BuildConfig.VERSION_NAME}"
                     has -> "当前版本 ${u.current}" + if (u.notes.isNotEmpty()) "\n${u.notes}" else ""
                     else -> "当前版本 ${u.current}，已是最新"

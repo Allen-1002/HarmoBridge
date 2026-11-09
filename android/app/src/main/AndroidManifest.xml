@@ -47,6 +47,11 @@
             </intent-filter>
         </service>
 
+        <!-- 自动更新：接收系统安装器的安装结果 -->
+        <receiver
+            android:name=".service.Updater$InstallResultReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
