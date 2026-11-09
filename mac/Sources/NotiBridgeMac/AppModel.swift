@@ -11,6 +11,8 @@ struct ReceivedRecord: Identifiable {
     let at: Date
     let notification: MirroredNotification
     let result: String
+    /// 来自哪台手机（deviceId）
+    var deviceId: String = ""
 }
 
 struct LogLine: Identifiable {
@@ -26,6 +28,11 @@ final class AppModel: ObservableObject {
     @Published var listening = "未启动"
     @Published var onlineDevices: [String: Date] = [:] // deviceId -> 最后活动时间
     @Published var pairedDevices: [KeychainStore.Device] = []
+    /// 用户在电脑上给手机起的名字（deviceId -> 名字），只保存在本机
+    @Published var deviceAliases: [String: String] =
+        UserDefaults.standard.dictionary(forKey: "deviceAliases") as? [String: String] ?? [:] {
+        didSet { UserDefaults.standard.set(deviceAliases, forKey: "deviceAliases") }
+    }
     @Published var pairingPin: String?
     @Published var pairingSas: String?
     @Published var paused = false {
@@ -182,10 +189,38 @@ final class AppModel: ObservableObject {
         // 手机在线：先通知手机同步删除；离线：手机下次连接时会收到 unknown_device，再自行删除这台电脑
         let notified = server.unpair(deviceId: d.id)
         store.remove(deviceId: d.id)
+        let name = displayName(d.id)
+        deviceAliases.removeValue(forKey: d.id)
         pairedDevices = store.devices()
         onlineDevices.removeValue(forKey: d.id)
-        log(notified ? "已取消配对：\(d.name)（已通知手机同步删除）"
-                     : "已取消配对：\(d.name)（手机不在线，下次连接时手机会自动删除这台电脑）")
+        log(notified ? "已取消配对：\(name)（已通知手机同步删除）"
+                     : "已取消配对：\(name)（手机不在线，下次连接时手机会自动删除这台电脑）")
+    }
+
+    // MARK: - 手机名字
+
+    /// 手机显示名：自定义了名字就用自定义名字，否则用手机配对时报告的名字。
+    func displayName(_ id: String) -> String {
+        if let a = deviceAliases[id], !a.isEmpty { return a }
+        return pairedDevices.first { $0.id == id }?.name ?? String(id.prefix(8))
+    }
+
+    /// 给手机改名；名字为空或与手机原名相同则恢复原名。
+    func rename(_ d: KeychainStore.Device, to newName: String) {
+        let n = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if n.isEmpty || n == d.name {
+            deviceAliases.removeValue(forKey: d.id)
+            log("\(d.name) 已恢复原名")
+        } else {
+            deviceAliases[d.id] = n
+            log("已把 \(d.name) 命名为 \(n)")
+        }
+    }
+
+    /// 配对了多台手机时，通知里才标出来源手机
+    func sourceLabel(_ deviceId: String) -> String? {
+        guard pairedDevices.count > 1, !deviceId.isEmpty else { return nil }
+        return displayName(deviceId)
     }
 
     // MARK: - 通话（实验）
@@ -318,6 +353,7 @@ final class AppModel: ObservableObject {
         onlineDevices.removeAll()
         let removedKeys = store.removeAll()
         pairedDevices = []
+        deviceAliases = [:]
         // 登录项
         if SMAppService.mainApp.status != .notRegistered {
             try? SMAppService.mainApp.unregister()
@@ -332,7 +368,7 @@ final class AppModel: ObservableObject {
             defaults.removePersistentDomain(forName: id)
         }
         for key in ["onboarded", "paused", "filter", "port", "macId", "copyOtp", "settingsUpdatedAt",
-                    "hfpDevice", "useMode", "updateAutoCheck", "updateAutoInstall", "updatePendingVersion"] {
+                    "hfpDevice", "deviceAliases", "useMode", "updateAutoCheck", "updateAutoInstall", "updatePendingVersion"] {
             defaults.removeObject(forKey: key)
         }
         defaults.synchronize()
@@ -465,7 +501,7 @@ final class AppModel: ObservableObject {
             handleRemoteSettings(st, seq: seq, conn: conn)
         case let .otp(o, seq):
             touch(conn)
-            server.ack(seq: seq, result: handleOtp(o), to: conn)
+            server.ack(seq: seq, result: handleOtp(o, from: connectionDevice[conn] ?? ""), to: conn)
         case let .cancel(ids, seq):
             touch(conn)
             // 通知 id 按手机区分：不同手机的 hashCode 可能相同
@@ -496,11 +532,11 @@ final class AppModel: ObservableObject {
             case .duplicate:
                 result = "duplicate"
             case .new, .updated:
-                notifier.show(n)
+                notifier.show(n, source: sourceLabel(deviceId))
                 result = "shown"
             }
         }
-        records.insert(ReceivedRecord(at: Date(), notification: n, result: result), at: 0)
+        records.insert(ReceivedRecord(at: Date(), notification: n, result: result, deviceId: deviceId), at: 0)
         if records.count > 200 { records.removeLast(records.count - 200) }
         return result
     }
@@ -553,7 +589,7 @@ final class AppModel: ObservableObject {
     @Published var lastOtp: (code: String, app: String, at: Date)?
 
     /// 验证码：复制到剪贴板并提示；2 分钟后若剪贴板仍是这个验证码则清除。
-    private func handleOtp(_ o: OtpCode) -> String {
+    private func handleOtp(_ o: OtpCode, from deviceId: String) -> String {
         if paused { return "paused" }
         if filter.blacklist.contains(o.bundleName) { return "filtered" }
         guard copyOtp else { return "filtered" }
@@ -563,7 +599,7 @@ final class AppModel: ObservableObject {
         let change = pb.changeCount
         lastOtp = (o.code, o.appName, Date())
         todayOtp += 1
-        notifier.showOtp(code: o.code, app: o.appName)
+        notifier.showOtp(code: o.code, app: o.appName, source: sourceLabel(deviceId))
         log("验证码已复制到剪贴板（来自 \(o.appName)，\(o.code.count) 位）")
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
             if pb.changeCount == change {
@@ -578,9 +614,7 @@ final class AppModel: ObservableObject {
         if let d = connectionDevice[conn] { onlineDevices[d] = Date() }
     }
 
-    private func deviceName(_ id: String) -> String {
-        pairedDevices.first { $0.id == id }?.name ?? String(id.prefix(8))
-    }
+    private func deviceName(_ id: String) -> String { displayName(id) }
 
     func log(_ text: String) {
         // 日志不写入通知正文

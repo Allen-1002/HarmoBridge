@@ -188,6 +188,12 @@ public partial class MainWindow : Window
         Go(2);
     }
 
+    private void OnRename(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not DeviceItem d) return;
+        if (RenameDialog.Ask(this, d) is { } name) _model.Rename(d, name);
+    }
+
     private void OnUnpair(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not DeviceItem d) return;

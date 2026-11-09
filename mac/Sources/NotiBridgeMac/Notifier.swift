@@ -26,13 +26,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func show(_ n: MirroredNotification) {
+    /// source：来源手机名（配对了多台手机时才有），显示在应用名后面
+    func show(_ n: MirroredNotification, source: String? = nil) {
         let content = UNMutableNotificationContent()
         let app = n.appName.isEmpty ? n.bundleName : n.appName
-        content.title = n.isTest ? "[测试] \(app)" : app
+        let head = source.map { "\(app) · \($0)" } ?? app
+        content.title = n.isTest ? "[测试] \(head)" : head
         content.subtitle = n.title
         content.body = n.text
-        content.threadIdentifier = n.bundleName
+        content.threadIdentifier = source.map { "\($0)/\(n.bundleName)" } ?? n.bundleName
         content.sound = .default
         // 右侧显示原应用图标：Mac 上有对应应用就用它的图标，否则用彩色首字母
         if let att = icons.attachment(bundleName: n.bundleName, appName: app) {
@@ -60,10 +62,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     private func identifier(_ id: String) -> String { "hb-\(id)" }
 
-    func showOtp(code: String, app: String) {
+    func showOtp(code: String, app: String, source: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = "验证码 \(code) 已复制"
-        content.body = "来自 \(app) · 2 分钟后自动从剪贴板清除"
+        let from = source.map { "\($0) 的 \(app)" } ?? app
+        content.body = "来自 \(from) · 2 分钟后自动从剪贴板清除"
         content.sound = .default
         content.interruptionLevel = .timeSensitive
         center.add(UNNotificationRequest(identifier: "hb-otp-\(UUID().uuidString)", content: content, trigger: nil))

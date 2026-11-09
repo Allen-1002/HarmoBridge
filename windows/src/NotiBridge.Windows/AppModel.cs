@@ -15,7 +15,11 @@ public sealed class DeviceItem : ObservableObject
     private DateTimeOffset? _lastSeen;
 
     public required string Id { get; init; }
+    /// <summary>显示名：自定义了名字就是自定义名字，否则是手机原名</summary>
     public required string Name { get; init; }
+    /// <summary>手机配对时报告的名字</summary>
+    public required string OriginalName { get; init; }
+    public bool IsRenamed => Name != OriginalName;
     public DateTimeOffset PairedAt { get; init; }
     public string Initial => Name.Length > 0 ? Name[..1] : "?";
     public Brush AvatarBrush => new SolidColorBrush(AppIcons.AvatarColor(Id));
@@ -32,8 +36,8 @@ public sealed class DeviceItem : ObservableObject
         set { if (Set(ref _lastSeen, value)) Raise(nameof(StatusText)); }
     }
 
-    public string StatusText => IsOnline ? "在线" :
-        LastSeen is { } t ? $"待命 · 最近同步 {t.LocalDateTime:HH:mm}" : "待命（有通知时自动连接）";
+    public string StatusText => (IsRenamed ? $"{OriginalName} · " : "") + (IsOnline ? "在线" :
+        LastSeen is { } t ? $"待命 · 最近同步 {t.LocalDateTime:HH:mm}" : "待命（有通知时自动连接）");
 }
 
 public sealed class RecordItem : ObservableObject
@@ -488,6 +492,7 @@ public sealed class AppModel : ObservableObject
         // 手机在线：先通知手机同步删除；离线：手机下次连接时会收到 unknown_device，再自行删除这台电脑
         var notified = _server.Unpair(d.Id);
         _store.Remove(d.Id);
+        if (_settings.DeviceAliases.Remove(d.Id)) _settings.Save();
         ReloadDevices();
         Log(notified ? $"已取消配对：{d.Name}（已通知手机同步删除）"
             : $"已取消配对：{d.Name}（手机不在线，下次连接时手机会自动删除这台电脑）");
@@ -499,7 +504,11 @@ public sealed class AppModel : ObservableObject
         Devices.Clear();
         foreach (var d in _store.Devices().OrderBy(d => d.PairedAt))
         {
-            var item = new DeviceItem { Id = d.Id, Name = d.Name, PairedAt = d.PairedAt };
+            var alias = _settings.DeviceAliases.GetValueOrDefault(d.Id);
+            var item = new DeviceItem
+            {
+                Id = d.Id, Name = string.IsNullOrWhiteSpace(alias) ? d.Name : alias, OriginalName = d.Name, PairedAt = d.PairedAt,
+            };
             if (online.TryGetValue(d.Id, out var st))
             {
                 item.IsOnline = st.IsOnline;
@@ -508,6 +517,24 @@ public sealed class AppModel : ObservableObject
             Devices.Add(item);
         }
         RaiseStatus();
+    }
+
+    /// <summary>给手机改名；名字为空或与手机原名相同则恢复原名。</summary>
+    public void Rename(DeviceItem d, string newName)
+    {
+        var n = newName.Trim();
+        if (n.Length == 0 || n == d.OriginalName)
+        {
+            _settings.DeviceAliases.Remove(d.Id);
+            Log($"{d.OriginalName} 已恢复原名");
+        }
+        else
+        {
+            _settings.DeviceAliases[d.Id] = n;
+            Log($"已把 {d.OriginalName} 命名为 {n}");
+        }
+        _settings.Save();
+        ReloadDevices();
     }
 
     private DeviceItem? Device(string id) => Devices.FirstOrDefault(d => d.Id == id);
@@ -596,7 +623,7 @@ public sealed class AppModel : ObservableObject
                 break;
             case SessionOutput.Otp otp:
                 Touch(conn);
-                _server.Ack(otp.Seq, HandleOtp(otp.Code), conn);
+                _server.Ack(otp.Seq, HandleOtp(otp.Code, _connectionDevice.GetValueOrDefault(conn, "")), conn);
                 break;
             case SessionOutput.Cancel c:
                 Touch(conn);
@@ -660,7 +687,7 @@ public sealed class AppModel : ObservableObject
     [DllImport("user32.dll")]
     private static extern uint GetClipboardSequenceNumber();
 
-    private string HandleOtp(OtpCode o)
+    private string HandleOtp(OtpCode o, string dev)
     {
         if (Paused) return "paused";
         if (_settings.Filter.Blacklist.Contains(o.BundleName)) return "filtered";
@@ -673,7 +700,7 @@ public sealed class AppModel : ObservableObject
         Raise(nameof(LastOtpText));
         Raise(nameof(HasLastOtp));
         RaiseStats();
-        _notifier.ShowOtp(o.Code, o.AppName);
+        _notifier.ShowOtp(o.Code, o.AppName, Devices.Count > 1 && dev.Length > 0 ? DeviceName(dev) : null);
         Log($"验证码已复制到剪贴板（来自 {o.AppName}，{o.Code.Length} 位）");
         // 2 分钟后若剪贴板没被改过，就清除
         var t = new DispatcherTimer { Interval = TimeSpan.FromMinutes(2) };

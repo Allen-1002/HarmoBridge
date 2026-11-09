@@ -283,7 +283,12 @@ struct StatusMenu: View {
                     HStack(spacing: 10) {
                         AppAvatar(name: r.notification.appName, key: r.notification.bundleName, size: 30)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(r.notification.appName).font(.callout.weight(.medium)).lineLimit(1)
+                            HStack(spacing: 4) {
+                                Text(r.notification.appName).font(.callout.weight(.medium)).lineLimit(1)
+                                if let src = model.sourceLabel(r.deviceId) {
+                                    Text("· \(src)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
                             if model.showContentInList {
                                 Text(r.notification.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
@@ -512,7 +517,7 @@ struct OverviewView: View {
                                 .frame(maxWidth: .infinity).padding(.vertical, 20)
                         }
                         ForEach(model.records.prefix(6)) { r in
-                            RecordRow(record: r, showContent: model.showContentInList)
+                            RecordRow(record: r, showContent: model.showContentInList, source: model.sourceLabel(r.deviceId))
                             if r.id != model.records.prefix(6).last?.id { Divider().opacity(0.5) }
                         }
                     }
@@ -625,6 +630,7 @@ struct QuickAction: View {
 struct RecordRow: View {
     let record: ReceivedRecord
     let showContent: Bool
+    var source: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -634,6 +640,10 @@ struct RecordRow: View {
                     Text(record.notification.appName).font(.callout.weight(.semibold))
                     if record.notification.isTest {
                         Text("测试").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if let source {
+                        Label(source, systemImage: "iphone").font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     Spacer()
                     ResultBadge(result: record.result)
@@ -659,6 +669,7 @@ struct RecordsView: View {
         guard !query.isEmpty else { return model.records }
         return model.records.filter {
             $0.notification.appName.localizedCaseInsensitiveContains(query) ||
+                model.displayName($0.deviceId).localizedCaseInsensitiveContains(query) ||
                 $0.notification.bundleName.localizedCaseInsensitiveContains(query) ||
                 (model.showContentInList && ($0.notification.title.localizedCaseInsensitiveContains(query) ||
                     $0.notification.text.localizedCaseInsensitiveContains(query)))
@@ -667,7 +678,7 @@ struct RecordsView: View {
 
     var body: some View {
         List(filtered) { r in
-            RecordRow(record: r, showContent: model.showContentInList).padding(.vertical, 4)
+            RecordRow(record: r, showContent: model.showContentInList, source: model.sourceLabel(r.deviceId)).padding(.vertical, 4)
         }
         .overlay {
             if model.records.isEmpty {
@@ -687,6 +698,8 @@ struct RecordsView: View {
 
 struct DevicesView: View {
     @EnvironmentObject var model: AppModel
+    @State private var renaming: KeychainStore.Device?
+    @State private var newName = ""
 
     var body: some View {
         Form {
@@ -698,11 +711,16 @@ struct DevicesView: View {
                     HStack {
                         Image(systemName: "iphone").font(.title2).foregroundStyle(Color.accentColor)
                         VStack(alignment: .leading) {
-                            Text(d.name)
-                            Text(model.onlineDevices[d.id] != nil ? "已连接" : model.phoneStatusText)
+                            Text(model.displayName(d.id))
+                            let status = model.onlineDevices[d.id] != nil ? "已连接" : model.phoneStatusText
+                            Text(model.displayName(d.id) != d.name ? "\(d.name) · \(status)" : status)
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
+                        Button("改名") {
+                            newName = model.displayName(d.id)
+                            renaming = d
+                        }
                         Button("取消配对", role: .destructive) { model.unpair(d) }
                     }
                 }
@@ -736,6 +754,22 @@ struct DevicesView: View {
         }
         .formStyle(.grouped)
         .hbPageBackground()
+        .alert("给手机改名", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("名字", text: $newName)
+            Button("保存") {
+                if let d = renaming { model.rename(d, to: newName) }
+                renaming = nil
+            }
+            if let d = renaming, model.displayName(d.id) != d.name {
+                Button("恢复原名") {
+                    model.rename(d, to: "")
+                    renaming = nil
+                }
+            }
+            Button("取消", role: .cancel) { renaming = nil }
+        } message: {
+            Text("名字只保存在这台电脑上。配对了多台手机时，通知会用这个名字标出来源。")
+        }
     }
 }
 

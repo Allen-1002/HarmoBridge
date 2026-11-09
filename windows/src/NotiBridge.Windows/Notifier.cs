@@ -78,14 +78,15 @@ internal sealed class Notifier
         }
     }
 
-    public void ShowOtp(string code, string app)
+    public void ShowOtp(string code, string app, string? phoneName = null)
     {
+        var from = phoneName is null ? app : $"{phoneName} 的 {app}";
         try
         {
             new ToastContentBuilder()
                 .AddArgument("action", "open")
                 .AddText($"验证码 {code} 已复制")
-                .AddText($"来自 {app} · 2 分钟后自动从剪贴板清除")
+                .AddText($"来自 {from} · 2 分钟后自动从剪贴板清除")
                 .AddButton(new ToastButton().SetContent("再次复制").AddArgument("action", "copy").AddArgument("code", code)
                     .SetBackgroundActivation())
                 .Show(t =>
