@@ -20,8 +20,8 @@ android {
         minSdk = 26
         targetSdk = 36
         // 与 Mac、Windows、鸿蒙端共用版本号
-        versionCode = 10202
-        versionName = "1.2.2"
+        versionCode = 10203
+        versionName = "1.2.3"
     }
 
     signingConfigs {
