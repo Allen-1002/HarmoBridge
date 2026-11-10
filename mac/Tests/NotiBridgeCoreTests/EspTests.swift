@@ -509,3 +509,54 @@ final class AudioLinkTests: XCTestCase {
         XCTAssertEqual(j.underruns, 1)
     }
 }
+
+/// 真板串口压力测试（默认跳过）：HB_ESP_PORT=… HB_ESP_STRESS=秒 [HB_ESP_BAUD=1000000] swift test --filter RealBoardStress
+/// 用和 App 相同的 PosixSerialPort：提速，每 7.5 ms 发一帧上行音频，同时读下行，最后统计固件报的未知命令数。
+final class RealBoardStressTests: XCTestCase {
+    func testPacedFramesAtHighBaud() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["HB_ESP_PORT"], let secs = Double(env["HB_ESP_STRESS"] ?? "") else { throw XCTSkip("未设置") }
+        let baud = Int(env["HB_ESP_BAUD"] ?? "") ?? 1_000_000
+        let port = try PosixSerialPort(path: path)
+        try port.setDTR(false)
+        try port.setRTS(false)
+        usleep(300_000)
+        try port.write(Array("\nBAUD \(baud)\n".utf8))
+        var demux = SerialDemux()
+        var acked = false
+        let t0 = Date()
+        while Date().timeIntervalSince(t0) < 1.5 && !acked {
+            for item in demux.feed(try port.read(timeout: 0.1)) {
+                if case let .line(l) = item, l.contains("\"t\":\"baud\"") { acked = true }
+            }
+        }
+        XCTAssertTrue(acked)
+        usleep(20_000)
+        try port.setBaud(baud)
+        try port.write(Array("HB?\n".utf8))
+        var unknown = 0, hello = 0, seq: UInt16 = 0
+        var next = Date()
+        let end = Date().addingTimeInterval(secs)
+        var lastPing = Date()
+        while Date() < end {
+            if Date() >= next {
+                seq &+= 1
+                try port.write(SerialDemux.encode(type: .audioUp, seq: seq, data: [UInt8](repeating: 0x11, count: 240)))
+                next = next.addingTimeInterval(0.0075)
+            }
+            if Date().timeIntervalSince(lastPing) > 1 {
+                try port.write(Array("PING\nHB?\n".utf8))
+                lastPing = Date()
+            }
+            for item in demux.feed(try port.read(timeout: 0.002)) {
+                if case let .line(l) = item {
+                    if l.contains("unknown_cmd") { unknown += 1 }
+                    if l.hasPrefix("HB-ESP32") { hello += 1 }
+                }
+            }
+        }
+        print("波特率 \(baud)：发送 \(seq) 帧，未知命令 \(unknown) 次，握手回复 \(hello) 次")
+        port.close()
+        XCTAssertEqual(unknown, 0)
+    }
+}

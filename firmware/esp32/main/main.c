@@ -790,7 +790,8 @@ static void handle_command(char *line) {
             emit_error("bad_baud", "不支持的波特率");
         }
     } else if (strcmp(line, "PING") == 0) {
-        // 电脑在高波特率下的心跳
+        // 电脑在高波特率下的心跳：回一个 pong，电脑据此判断串口速度还对得上
+        serial_eventf("{\"t\":\"pong\"}");
     } else if (strcmp(line, "REBOOT") == 0) {
         esp_restart();
     } else {
@@ -815,6 +816,9 @@ void app_main(void) {
     parse_uuid128("22EAC6E9-24D6-4BB5-BE44-B36ACE7C7BFB", &uuid_ds);
 
     serial_link_start(handle_command);
+    // 上次为什么重启（电脑端记录，排查崩溃/看门狗/掉电）：1 上电 3 软件 4 崩溃 5~7 看门狗 9 掉电
+    serial_eventf("{\"t\":\"boot\",\"reason\":%d,\"version\":\"%s\"}", (int)esp_reset_reason(),
+                  esp_app_get_description()->version);
 
     // 第一阶段只用 BLE；经典蓝牙（HFP 通话）在第二阶段加入
     // 双模：BLE（iPhone 通知）+ 经典蓝牙（HFP 通话）

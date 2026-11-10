@@ -179,6 +179,7 @@ final class Esp32Manager: ObservableObject {
         let before = selected
         scan()
         if selected != before || !paths.contains(before) {
+            onLog?("串口列表变化：\(before.isEmpty ? "无" : before) → \(selected.isEmpty ? "无" : selected)，重新检测")
             stopLink()
             if !selected.isEmpty { checkFirmware() }
         } else if mode == .esp32, !selected.isEmpty, linkThread == nil {
@@ -231,6 +232,7 @@ final class Esp32Manager: ObservableObject {
     /// 检测固件：发送握手，2 秒内收到 NotiBridge 固件的回复即成功。检测期间暂停串口连接。
     func checkFirmware() {
         guard !selected.isEmpty else { return }
+        onLog?("检测 ESP32 固件（\(selected)）")
         firmware = .checking
         let path = selected
         stopLink()
@@ -485,7 +487,7 @@ final class Esp32Manager: ObservableObject {
                 announcedError = ""
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.linkError = "" } }
                 var demux = SerialDemux()
-                var lastProbe = Date(), lastWrite = Date(), lastRx = Date()
+                var lastProbe = Date(), lastWrite = Date(), lastRx = Date(), lastValid = Date()
                 var baud = 115_200
                 var askedHigh = false
                 var verifyDeadline: Date?
@@ -497,6 +499,10 @@ final class Esp32Manager: ObservableObject {
                         case let .frame(f):
                             if f.type == SerialFrameType.audioDown.rawValue { callAudio?.receive(f.data) }
                         case let .line(line):
+                            if line.hasPrefix("@{") || line.hasPrefix("HB-ESP32") { lastValid = Date() }
+                            if line.hasPrefix("@{\"t\":\"boot\"") {
+                                DispatchQueue.main.async { MainActor.assumeIsolated { self.onLog?("ESP32 重新启动了：\(line.dropFirst())") } }
+                            }
                             // 串口提速：固件 1.3.0 起支持，通话音频需要约 70 KB/s
                             if line.hasPrefix("HB-ESP32 ") {
                                 verifyDeadline = nil
@@ -536,7 +542,9 @@ final class Esp32Manager: ObservableObject {
                         try write(port, Array("PING\n".utf8))
                         lastWrite = now
                     }
-                    if baud != 115_200 && now.timeIntervalSince(lastRx) > 6 {
+                    // 高波特率下 4 秒没有一条完整的消息（心跳有 pong 回复）：多半是 ESP32 重启回到了 115200，重新连接
+                    if baud != 115_200 && (now.timeIntervalSince(lastRx) > 6 || now.timeIntervalSince(lastValid) > 4) {
+                        DispatchQueue.main.async { MainActor.assumeIsolated { self.onLog?("ESP32 串口速度对不上了，重新连接") } }
                         throw PosixSerialPort.OpenError.open(path, ETIMEDOUT)
                     }
                     // 固件复位后（例如按了 EN）重新获取状态
