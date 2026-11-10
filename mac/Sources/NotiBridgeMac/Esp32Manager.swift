@@ -153,18 +153,50 @@ final class Esp32Manager: ObservableObject {
     nonisolated(unsafe) private var linkPort: PosixSerialPort?
     nonisolated private let linkLock = NSLock()
 
+    private var knownPortPaths: [String] = []
+    private var portWatch: Timer?
+
+    /// 插拔板子后串口会变：每 2 秒看一次串口列表，变了就重新检测；正在用的串口没了或换了板子，就把连接切到新串口。
+    func startPortWatch() {
+        guard portWatch == nil else { return }
+        portWatch = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { _ = self?.refreshPortsIfChanged() }
+        }
+    }
+
+    @discardableResult
+    func refreshPortsIfChanged() -> Bool {
+        if case .flashing = firmware { return false }
+        if firmware == .checking { return false }
+        let paths = Self.serialPorts().map(\.path).sorted()
+        guard paths != knownPortPaths else { return false }
+        let before = selected
+        scan()
+        if selected != before || !paths.contains(before) {
+            stopLink()
+            if !selected.isEmpty { checkFirmware() }
+        } else if mode == .esp32, !selected.isEmpty, linkThread == nil {
+            startLink()
+        }
+        return true
+    }
+
     func scan() {
+        knownPortPaths = Self.serialPorts().map(\.path).sorted()
         let remembered = selected
         ports = Self.serialPorts().sorted { ($0.isLikelyEsp32 ? 0 : 1, $0.name) < ($1.isLikelyEsp32 ? 0 : 1, $1.name) }
         scanned = true
         if link == nil { firmware = .unknown }
-        if let keep = ports.first(where: { $0.path == remembered }) {
+        // 记住的串口只有在仍然像 ESP32（或没有别的像 ESP32 的串口）时才沿用
+        if let keep = ports.first(where: { $0.path == remembered }),
+           keep.isLikelyEsp32 || !ports.contains(where: \.isLikelyEsp32) {
             selected = keep.path
             message = keep.isLikelyEsp32 ? "已找到 ESP32 模块" : "找到 USB 串口，但无法确认是 ESP32"
         } else if let first = ports.first(where: \.isLikelyEsp32) ?? ports.first {
             selected = first.path
             message = ports.contains(where: \.isLikelyEsp32) ? "已找到 ESP32 模块" : "找到 USB 串口，但无法确认是 ESP32"
         } else {
+            selected = ""
             let missing = Self.usbSerialChipsWithoutPort(known: ports)
             message = missing.isEmpty ? UsbSerialChip.notFoundMessage : UsbSerialChip.driverMissingMessage(chips: missing)
         }
@@ -327,6 +359,7 @@ final class Esp32Manager: ObservableObject {
 
     /// App 启动或切换到 ESP32 模式时调用：记住的串口存在就直接连接。
     func startLinkIfPossible() {
+        startPortWatch()
         guard mode == .esp32, linkThread == nil else { return }
         Task { await refreshFirmwareFeed() }
         if selected.isEmpty || !FileManager.default.fileExists(atPath: selected) { scan() }

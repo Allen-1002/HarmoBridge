@@ -125,7 +125,36 @@ public sealed partial class Esp32Manager : ObservableObject
     public event Action<Esp32Event>? Event;
     public event Action<string>? LogLine;
 
-    public Esp32Manager(AppSettings settings) => _settings = settings;
+    public Esp32Manager(AppSettings settings)
+    {
+        _settings = settings;
+        // 插拔板子后串口会变（例如 COM3 → COM5）：每 2 秒看一次串口列表，变了就重新检测
+        _portWatch.Tick += (_, _) => RefreshPortsIfChanged();
+        _portWatch.Start();
+    }
+
+    private readonly System.Windows.Threading.DispatcherTimer _portWatch = new() { Interval = TimeSpan.FromSeconds(2) };
+    private string[] _knownPortNames = [];
+
+    /// <summary>串口列表有变化时重新检测；正在用的串口没了或换了板子，就把连接切到新串口。返回是否有变化。</summary>
+    public bool RefreshPortsIfChanged()
+    {
+        if (Busy || Flashing) return false;
+        var names = SerialPort.GetPortNames().Distinct().Order().ToArray();
+        if (names.SequenceEqual(_knownPortNames)) return false;
+        var before = Selected?.Port;
+        Scan();
+        if (Selected?.Port != before)
+        {
+            StopLink();
+            if (Selected is not null) _ = CheckFirmwareAsync();
+        }
+        else if (UseEsp32 && Selected is not null && _linkThread is null)
+        {
+            StartLink();
+        }
+        return true;
+    }
 
     public bool UseEsp32
     {
@@ -204,7 +233,11 @@ public sealed partial class Esp32Manager : ObservableObject
         }
         var list = ListPorts().OrderBy(p => p.IsLikelyEsp32 ? 0 : 1).ThenBy(p => p.Port).ToList();
         Ports = list;
-        Selected = list.FirstOrDefault(p => p.Port == _settings.Esp32Port) ?? list.FirstOrDefault();
+        // 记住的串口只有在仍然像 ESP32（或根本没有像 ESP32 的串口）时才沿用，否则换到新插上的板子
+        var remembered = list.FirstOrDefault(p => p.Port == _settings.Esp32Port);
+        Selected = remembered is { IsLikelyEsp32: true } ? remembered
+            : list.FirstOrDefault(p => p.IsLikelyEsp32) ?? remembered ?? list.FirstOrDefault();
+        _knownPortNames = SerialPort.GetPortNames().Distinct().Order().ToArray();
         var missing = list.Any(p => p.IsLikelyEsp32) ? [] : UsbSerialChipsWithoutDriver();
         Message = missing.Count > 0 ? UsbSerialChip.DriverMissingMessage(missing)
             : list.Count == 0 ? UsbSerialChip.NotFoundMessage

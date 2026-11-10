@@ -39,11 +39,11 @@ struct Esp32Panel: View {
             DisclosureGroup("高级", isExpanded: $showAdvanced) { advanced.padding(.top, 8) }
         }
         .onAppear { if !esp.scanned { detect() } }
-        // 插上板子后自动检测：还没找到串口时每 2 秒找一次
+        // 插上、拔掉或换板子后自动刷新：每 2 秒看一次串口列表，有变化就重新检测
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if esp.ports.isEmpty && !flashing { detect() }
+                if !flashing { esp.refreshPortsIfChanged() }
             }
         }
         .confirmationDialog("删除 ESP32 上的全部 iPhone 配对？", isPresented: $confirmForgetAll, titleVisibility: .visible) {

@@ -22,10 +22,10 @@ public partial class Esp32Panel : UserControl
         InitializeComponent();
         DataContextChanged += (_, _) => Bind(DataContext as Esp32Manager);
         IsVisibleChanged += (_, _) => OnVisibleChanged();
-        // 插上板子后自动检测：还没找到串口时每 2 秒找一次
+        // 插上板子后自动检测：每 2 秒看一次串口列表（Esp32Manager 也会在后台检查），有变化就刷新界面
         _detect.Tick += (_, _) =>
         {
-            if (Esp is { HasPorts: false, NotBusy: true }) Detect();
+            if (Esp is { NotBusy: true } esp && esp.RefreshPortsIfChanged()) Refresh();
         };
     }
 
