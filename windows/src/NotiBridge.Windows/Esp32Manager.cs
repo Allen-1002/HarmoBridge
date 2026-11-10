@@ -205,8 +205,9 @@ public sealed partial class Esp32Manager : ObservableObject
         var list = ListPorts().OrderBy(p => p.IsLikelyEsp32 ? 0 : 1).ThenBy(p => p.Port).ToList();
         Ports = list;
         Selected = list.FirstOrDefault(p => p.Port == _settings.Esp32Port) ?? list.FirstOrDefault();
-        Message = list.Count == 0
-            ? "没有找到。请用支持数据传输的 USB 线连接 ESP32；CH340 / CP210x 芯片的板子可能需要先安装驱动。"
+        var missing = list.Any(p => p.IsLikelyEsp32) ? [] : UsbSerialChipsWithoutDriver();
+        Message = missing.Count > 0 ? UsbSerialChip.DriverMissingMessage(missing)
+            : list.Count == 0 ? UsbSerialChip.NotFoundMessage
             : list.Any(p => p.IsLikelyEsp32) ? "已找到 ESP32 模块" : "找到串口，但无法确认是 ESP32";
     }
 
@@ -508,7 +509,8 @@ public sealed partial class Esp32Manager : ObservableObject
     [GeneratedRegex(@"\((COM\d+)\)")]
     private static partial Regex ComRegex();
 
-    [GeneratedRegex(@"VID_([0-9A-F]{4})&PID_([0-9A-F]{4})", RegexOptions.IgnoreCase)]
+    // USB\VID_1A86&PID_7523\…，FTDI 的串口是 FTDIBUS\VID_0403+PID_6001…
+    [GeneratedRegex(@"VID_([0-9A-F]{4})[&+]PID_([0-9A-F]{4})", RegexOptions.IgnoreCase)]
     private static partial Regex VidPidRegex();
 
     private static List<Esp32Port> ListPorts()
@@ -524,20 +526,9 @@ public sealed partial class Esp32Manager : ObservableObject
                 if (!m.Success) continue;
                 var pnp = o["PNPDeviceID"] as string ?? "";
                 var vp = VidPidRegex().Match(pnp);
-                string? chip = null;
-                if (vp.Success)
-                {
-                    var vid = vp.Groups[1].Value.ToUpperInvariant();
-                    var pid = vp.Groups[2].Value.ToUpperInvariant();
-                    chip = vid switch
-                    {
-                        "10C4" => "CP210x",
-                        "1A86" => pid == "55D4" ? "CH9102" : "CH340",
-                        "0403" => "FTDI",
-                        "303A" => "ESP32 原生 USB",
-                        _ => null,
-                    };
-                }
+                string? chip = vp.Success
+                    ? UsbSerialChip.Name(Convert.ToInt32(vp.Groups[1].Value, 16), Convert.ToInt32(vp.Groups[2].Value, 16))
+                    : null;
                 info[m.Groups[1].Value] = (name.Replace($"({m.Groups[1].Value})", "").Trim(), chip);
             }
         }
@@ -547,6 +538,31 @@ public sealed partial class Esp32Manager : ObservableObject
         }
         return SerialPort.GetPortNames().Distinct().Select(p =>
             info.TryGetValue(p, out var i) ? new Esp32Port(p, i.Name, i.Chip) : new Esp32Port(p, "串口", null)).ToList();
+    }
+
+    /// <summary>插着但设备管理器里报错（28 = 没有安装驱动）的 USB 串口芯片</summary>
+    private static List<string> UsbSerialChipsWithoutDriver()
+    {
+        var result = new List<string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT PNPDeviceID, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE PNPDeviceID LIKE 'USB\\\\VID_%'");
+            foreach (var o in searcher.Get())
+            {
+                var code = Convert.ToInt32(o["ConfigManagerErrorCode"] ?? 0);
+                if (code == 0) continue;
+                var vp = VidPidRegex().Match(o["PNPDeviceID"] as string ?? "");
+                if (!vp.Success) continue;
+                if (UsbSerialChip.Name(Convert.ToInt32(vp.Groups[1].Value, 16), Convert.ToInt32(vp.Groups[2].Value, 16)) is { } chip)
+                    result.Add(chip);
+            }
+        }
+        catch (Exception)
+        {
+            // WMI 不可用时不提示
+        }
+        return result;
     }
 
     private static (bool Ok, string Text) Handshake(string portName)

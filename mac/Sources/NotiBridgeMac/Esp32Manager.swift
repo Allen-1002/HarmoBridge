@@ -27,15 +27,7 @@ struct Esp32Port: Identifiable, Hashable {
     var id: String { path }
 
     /// 常见 ESP32 开发板的 USB 转串口芯片
-    var chip: String? {
-        switch vendorId {
-        case 0x10C4: return "CP210x"
-        case 0x1A86: return productId == 0x55D4 ? "CH9102" : "CH340"
-        case 0x0403: return "FTDI"
-        case 0x303A: return "ESP32 原生 USB"
-        default: return nil
-        }
-    }
+    var chip: String? { UsbSerialChip.name(vendorId: vendorId, productId: productId) }
 
     var isLikelyEsp32: Bool { chip != nil }
     var label: String { chip.map { "\(name)（\($0)）" } ?? name }
@@ -173,8 +165,29 @@ final class Esp32Manager: ObservableObject {
             selected = first.path
             message = ports.contains(where: \.isLikelyEsp32) ? "已找到 ESP32 模块" : "找到 USB 串口，但无法确认是 ESP32"
         } else {
-            message = "没有找到。请用支持数据传输的 USB 线连接 ESP32；CH340 芯片的板子需要先安装沁恒的 CH34x 驱动。"
+            let missing = Self.usbSerialChipsWithoutPort(known: ports)
+            message = missing.isEmpty ? UsbSerialChip.notFoundMessage : UsbSerialChip.driverMissingMessage(chips: missing)
         }
+    }
+
+    /// 插着的 USB 串口芯片里，没有对应串口的那些（= 缺驱动）
+    static func usbSerialChipsWithoutPort(known: [Esp32Port]) -> [String] {
+        guard let matching = IOServiceMatching("IOUSBHostDevice") else { return [] }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else { return [] }
+        defer { IOObjectRelease(iterator) }
+        var result: [String] = []
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            func int(_ k: String) -> Int? {
+                IORegistryEntryCreateCFProperty(service, k as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Int
+            }
+            let vid = int("idVendor"), pid = int("idProduct")
+            guard let chip = UsbSerialChip.name(vendorId: vid, productId: pid) else { continue }
+            if known.contains(where: { $0.vendorId == vid && $0.productId == pid }) { continue }
+            result.append(chip)
+        }
+        return result
     }
 
     /// 检测固件：发送握手，2 秒内收到 NotiBridge 固件的回复即成功。检测期间暂停串口连接。

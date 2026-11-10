@@ -60,7 +60,7 @@ flowchart LR
 
 ### iPhone（ESP32 模块）
 
-1. 准备一块 ESP32 开发板（经典 ESP32，例如 ESP32-WROOM-32E；不支持 S2/S3/C3），用支持数据传输的 USB 线插到电脑。CH340 芯片的板子在 Mac 上要先装[沁恒 CH34x 驱动](https://www.wch.cn/downloads/CH34XSER_MAC_ZIP.html)。
+1. 准备一块 ESP32 开发板（经典 ESP32，例如 ESP32-WROOM-32E；不支持 S2/S3/C3），用支持数据传输的 USB 线插到电脑。如果板子插上后 NotiBridge 提示“没有驱动”，请先自行安装板子上 USB 串口芯片（例如 CH340、CP210x）的驱动。
 2. 电脑端首次引导选“ESP32 模式”（或在侧边栏“ESP32 模块”里启用），插上板子会自动检测，点“刷写固件”（约 30 秒）。
 3. 在“设备与配对”点“添加设备”→“iPhone”，按提示在 iPhone「设置 › 蓝牙」里点 NotiBridge 配对，并在弹窗里允许共享通知。之后 iPhone 会自动重连。
 

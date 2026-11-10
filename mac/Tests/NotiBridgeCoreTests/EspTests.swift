@@ -446,3 +446,16 @@ final class RealFirmwareFeedTests: XCTestCase {
         print("固件 \(fw.version) \(img.count) 字节，签名校验通过")
     }
 }
+
+final class UsbSerialChipTests: XCTestCase {
+    func testNames() {
+        XCTAssertEqual(UsbSerialChip.name(vendorId: 0x1A86, productId: 0x7522), "CH340")
+        XCTAssertEqual(UsbSerialChip.name(vendorId: 0x1A86, productId: 0x55D4), "CH9102")
+        XCTAssertNil(UsbSerialChip.name(vendorId: 0x1A86, productId: 0x8091)) // 沁恒的 USB 集线器
+        XCTAssertEqual(UsbSerialChip.name(vendorId: 0x10C4, productId: 0xEA60), "CP210x")
+        XCTAssertNil(UsbSerialChip.name(vendorId: nil, productId: nil))
+        let m = UsbSerialChip.driverMissingMessage(chips: ["CH340", "CH340"])
+        XCTAssertTrue(m.contains("（CH340）") && m.contains("驱动"))
+        XCTAssertFalse(m.contains("http"))
+    }
+}

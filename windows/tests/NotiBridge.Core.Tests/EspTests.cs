@@ -323,3 +323,19 @@ public class EspBackupTests
         Assert.Single(store.All());
     }
 }
+
+public class UsbSerialChipTests
+{
+    [Fact]
+    public void Names()
+    {
+        Assert.Equal("CH340", UsbSerialChip.Name(0x1A86, 0x7522));
+        Assert.Equal("CH9102", UsbSerialChip.Name(0x1A86, 0x55D4));
+        Assert.Null(UsbSerialChip.Name(0x1A86, 0x8091));
+        Assert.Equal("CP210x", UsbSerialChip.Name(0x10C4, 0xEA60));
+        Assert.Null(UsbSerialChip.Name(null, null));
+        var m = UsbSerialChip.DriverMissingMessage(["CH340", "CH340"]);
+        Assert.Contains("（CH340）", m);
+        Assert.DoesNotContain("http", m);
+    }
+}
