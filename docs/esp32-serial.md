@@ -22,6 +22,17 @@
 | `BONDS?` | 立即输出一条 `bonds` 事件 |
 | `ACT <uid> <0或1>` | 对通知执行操作：0 正向（如接听），1 负向（如清除、拒接） |
 | `REBOOT` | 重启 ESP32 |
+| `BAUD <波特率>` | 切换串口速度（115200 / 1000000 / 1500000 / 2000000），固件先回 `baud` 事件再切换；电脑 3 秒没有数据时固件自动回到 115200 |
+| `PING` | 高波特率下的心跳，固件回 `pong` |
+| `ANSWER` / `HANGUP` | 接听 / 拒接或挂断 |
+| `DIAL <号码>` / `REDIAL` | 拨号 / 重拨 |
+| `DTMF <键>` | 通话中按键（0-9 * #） |
+| `AUDIO PC` / `AUDIO PHONE` | 通话声音走电脑 / 留在手机上 |
+| `HFP CONNECT [地址]` / `HFP DISCONNECT` | 连接 / 断开免提 |
+| `PREFER <地址>` / `PREFER NONE` | 设置 / 取消通话优先手机 |
+| `SWITCH <地址>` | 通话切换到这台手机 |
+| `PHONES?` | 输出 `hfp`、`call`、`phones` 事件 |
+| `UNPAIR_BT [地址]` | 删除一台 / 全部手机的通话配对 |
 
 ## 事件（ESP32 → 电脑）
 
@@ -61,3 +72,25 @@ SPI_ATTACH → SPI_SET_PARAMS → 切换到 460800 → FLASH_BEGIN/FLASH_DATA �
 GitHub Release `firmware-v<版本>`，不标记为 Latest（App 的自动更新只看 Latest）。Release 里有 `NotiBridge-ESP32-<版本>.bin`、
 `SHA256SUMS.txt` 和 `SHA256SUMS.txt.sig`（与 App 同一把 Ed25519 发布密钥）。电脑端安装包不带固件：点“刷写固件”时查询
 `/releases` 里最新的 `firmware-v*`，下载并校验签名和哈希后刷写，并缓存一份供离线使用。
+
+## 通话（固件 1.3.0 起）
+
+ESP32 同时是低功耗蓝牙“NotiBridge 通知”（iPhone 通知，独立的静态随机地址）和经典蓝牙“NotiBridge 通话”（HFP 免提，任何手机）。
+同一时间只能有一台手机连着通话；回连顺序是通话优先手机 → 上次的手机 → 其他配对过的手机。
+
+事件：
+
+```text
+@{"t":"hfp","state":"connected","peer":"8c:86:…","name":"…","audio":"msbc","audioTo":"pc","battery":5,"signal":4,"operator":"","discoverable":false}
+@{"t":"call","state":"incoming","number":"180…","call":0,"setup":1,"held":0}
+@{"t":"phones","list":[{"addr":"8c:86:…","name":"…","connected":true,"preferred":false}]}
+@{"t":"pair_code","code":"123456"}
+@{"t":"audio_stats","inCalls":…,"upFrames":…,"streaming":true,"baud":1000000}
+@{"t":"boot","reason":1,"version":"1.3.0"}
+```
+
+`call.state`：idle / incoming / dialing / alerting / active。`hfp.audio`：off / connecting / cvsd（8 kHz）/ msbc（16 kHz）。
+
+通话音频走二进制帧：`0xFE 0xA5 类型 长度(2) 序号(2) 数据`，类型 1 为手机 → 电脑，2 为电脑 → 手机，数据是 16 位小端单声道 PCM，
+每帧 7.5 ms（16 kHz 时 240 字节）。音频需要先 `BAUD 1000000`：实测 CH340 在 1.5M / 2M 下持续收发会丢字节，1M 最稳。
+电脑端要匀速发送上行帧（一次突发几十帧会让 ESP32 串口接收溢出）。
