@@ -80,13 +80,79 @@ final class Esp32Manager: ObservableObject {
     var onEvent: ((Esp32Event) -> Void)?
     var onLog: ((String) -> Void)?
 
-    /// 随 App 打包的固件（build_app.sh 从 firmware/esp32/prebuilt 复制）
-    static var firmwareURL: URL? { Bundle.main.url(forResource: "notibridge-esp32", withExtension: "bin") }
-    static var firmwareAvailable: Bool { firmwareURL != nil }
+    /// 固件不打包进 App：需要时从 GitHub 的固件 Release（firmware-v*）下载，校验签名后刷写。
+    /// 下载过的固件缓存在 ~/Library/Caches/com.xsh.notibridge.desktop/esp32-firmware，没网时用缓存。
+    static let firmwareCacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("com.xsh.notibridge.desktop/esp32-firmware", isDirectory: true)
+    /// GitHub 上最新的固件（nil = 还没查到）
+    @Published var latestFirmware: FirmwareFeed.Firmware?
+    private var feedCheckedAt: Date?
+    /// 总是可以刷写（点刷写时再下载）
+    static let firmwareAvailable = true
     /// 合并镜像（bootloader + 分区表 + 应用）从 0x1000 开始
     static let firmwareOffset: UInt32 = 0x1000
-    static var bundledVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    /// 最新固件的版本号（界面显示用）
+    var latestFirmwareVersion: String? { latestFirmware?.version }
+
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 20
+        c.httpAdditionalHeaders = ["User-Agent": UpdateCore.userAgent, "Accept": "application/vnd.github+json"]
+        return URLSession(configuration: c)
+    }()
+
+    /// 查询 GitHub 上最新的固件（最多每小时一次，force 时立即查）
+    @discardableResult
+    func refreshFirmwareFeed(force: Bool = false) async -> FirmwareFeed.Firmware? {
+        if !force, let t = feedCheckedAt, Date().timeIntervalSince(t) < 3600, latestFirmware != nil { return latestFirmware }
+        do {
+            let (data, resp) = try await Self.session.data(from: FirmwareFeed.releasesURL)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            if let fw = try FirmwareFeed.latest(fromReleasesJSON: data) {
+                latestFirmware = fw
+                feedCheckedAt = Date()
+            }
+        } catch {
+            onLog?("查询 ESP32 固件失败：\(error.localizedDescription)")
+        }
+        return latestFirmware
+    }
+
+    /// 下载并校验固件；已缓存且校验通过的直接用。没网时用缓存里最新的。
+    private func obtainFirmware() async throws -> (version: String, image: Data) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: Self.firmwareCacheDir, withIntermediateDirectories: true)
+        func cached(_ v: String) -> Data? {
+            let dir = Self.firmwareCacheDir
+            guard let img = try? Data(contentsOf: dir.appendingPathComponent(FirmwareFeed.assetName(version: v))),
+                  let sums = try? Data(contentsOf: dir.appendingPathComponent("\(v).sums")),
+                  let sig = try? Data(contentsOf: dir.appendingPathComponent("\(v).sig")),
+                  (try? FirmwareFeed.verify(image: img, version: v, sums: sums, signature: sig)) != nil else { return nil }
+            return img
+        }
+        if let fw = await refreshFirmwareFeed(force: true) {
+            if let img = cached(fw.version) { return (fw.version, img) }
+            func get(_ a: UpdateCore.Asset) async throws -> Data {
+                let (d, r) = try await Self.session.data(from: a.browserDownloadURL)
+                guard (r as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+                return d
+            }
+            let img = try await get(fw.image), sums = try await get(fw.sums), sig = try await get(fw.signature)
+            try FirmwareFeed.verify(image: img, version: fw.version, sums: sums, signature: sig)
+            let dir = Self.firmwareCacheDir
+            try? img.write(to: dir.appendingPathComponent(FirmwareFeed.assetName(version: fw.version)))
+            try? sums.write(to: dir.appendingPathComponent("\(fw.version).sums"))
+            try? sig.write(to: dir.appendingPathComponent("\(fw.version).sig"))
+            return (fw.version, img)
+        }
+        // 离线：缓存里最新的已校验固件
+        let names = (try? fm.contentsOfDirectory(atPath: Self.firmwareCacheDir.path)) ?? []
+        let versions = names.compactMap { n -> String? in
+            guard n.hasPrefix("NotiBridge-ESP32-"), n.hasSuffix(".bin") else { return nil }
+            return String(n.dropFirst("NotiBridge-ESP32-".count).dropLast(4))
+        }.sorted { UpdateCore.isNewer($0, than: $1) }
+        for v in versions { if let img = cached(v) { return (v, img) } }
+        throw URLError(.notConnectedToInternet)
     }
 
     private var linkThread: Thread?
@@ -134,8 +200,9 @@ final class Esp32Manager: ObservableObject {
         }
     }
 
+    /// GitHub 上有比板子上更新的固件
     var needsFirmwareUpdate: Bool {
-        if case let .found(v) = firmware { return Self.firmwareAvailable && v != Self.bundledVersion }
+        if case let .found(v) = firmware, let latest = latestFirmware?.version { return UpdateCore.isNewer(latest, than: v) }
         return false
     }
 
@@ -156,13 +223,24 @@ final class Esp32Manager: ObservableObject {
         }
     }
 
-    /// 刷写随 App 打包的固件（ESP32 ROM 下载协议，不需要 esptool）。第一次刷写某块板子前自动备份原固件。
+    /// 下载最新固件并刷写（ESP32 ROM 下载协议，不需要 esptool）。第一次刷写某块板子前自动备份原固件。
     func flash() {
-        guard let url = Self.firmwareURL, let data = try? Data(contentsOf: url) else {
-            message = "这个版本的 NotiBridge 没有附带 ESP32 固件。"
-            return
+        guard !selected.isEmpty else { return }
+        firmware = .flashing("正在下载固件…", 0)
+        Task {
+            let fw: (version: String, image: Data)
+            do {
+                fw = try await obtainFirmware()
+            } catch {
+                firmware = .flashFailed("无法下载固件（\(error.localizedDescription)）。请检查网络后重试。")
+                return
+            }
+            flash(image: fw.image, version: fw.version)
         }
-        onLog?("开始刷写 ESP32 固件 \(Self.bundledVersion)（\(data.count / 1024) KB）")
+    }
+
+    private func flash(image data: Data, version: String) {
+        onLog?("开始刷写 ESP32 固件 \(version)（\(data.count / 1024) KB）")
         runOnBoard(restoring: false) { port, onStage, log in
             let outcome = try EspFirmwareInstaller.install(image: [UInt8](data), port: port, store: Self.backupStore,
                                                            onStage: onStage, log: log)
@@ -237,6 +315,7 @@ final class Esp32Manager: ObservableObject {
     /// App 启动或切换到 ESP32 模式时调用：记住的串口存在就直接连接。
     func startLinkIfPossible() {
         guard mode == .esp32, linkThread == nil else { return }
+        Task { await refreshFirmwareFeed() }
         if selected.isEmpty || !FileManager.default.fileExists(atPath: selected) { scan() }
         guard !selected.isEmpty else { return }
         startLink()
@@ -338,6 +417,7 @@ final class Esp32Manager: ObservableObject {
         switch e {
         case let .hello(version, _, _):
             firmware = .found(version: version)
+            Task { await refreshFirmwareFeed() }
         case let .bonds(list):
             iphones = list
         case let .state(s):

@@ -23,10 +23,84 @@ public sealed partial class Esp32Manager : ObservableObject
 {
     /// <summary>合并镜像（bootloader + 分区表 + 应用）从 0x1000 开始</summary>
     public const uint FirmwareOffset = 0x1000;
-    private const string FirmwareResource = "notibridge-esp32.bin";
+    /// <summary>固件不打包进程序：需要时从 GitHub 的固件 Release（firmware-v*）下载，校验签名后刷写。缓存在 %LOCALAPPDATA%\NotiBridge\esp32-firmware。</summary>
+    public static readonly string FirmwareCacheDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NotiBridge", "esp32-firmware");
+    /// <summary>总是可以刷写（点刷写时再下载）</summary>
+    public const bool FirmwareAvailable = true;
 
-    public static bool FirmwareAvailable => typeof(Esp32Manager).Assembly.GetManifestResourceInfo(FirmwareResource) is not null;
-    public static string BundledVersion => typeof(Esp32Manager).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "?";
+    private FirmwareFeed.Firmware? _latestFirmware;
+    private DateTime _feedCheckedAt;
+    /// <summary>GitHub 上最新的固件（null = 还没查到）</summary>
+    public FirmwareFeed.Firmware? LatestFirmware
+    {
+        get => _latestFirmware;
+        private set { Set(ref _latestFirmware, value); Raise(nameof(NeedsFirmwareUpdate)); Raise(nameof(UpdateFirmwareText)); Raise(nameof(LatestFirmwareVersion)); }
+    }
+    public string? LatestFirmwareVersion => _latestFirmware?.Version;
+
+    private static readonly System.Net.Http.HttpClient Http = NewHttp();
+
+    private static System.Net.Http.HttpClient NewHttp()
+    {
+        var c = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd(UpdateCore.UserAgent);
+        c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        return c;
+    }
+
+    /// <summary>查询 GitHub 上最新的固件（最多每小时一次，force 时立即查）</summary>
+    public async Task<FirmwareFeed.Firmware?> RefreshFirmwareFeedAsync(bool force = false)
+    {
+        if (!force && _latestFirmware is not null && DateTime.UtcNow - _feedCheckedAt < TimeSpan.FromHours(1)) return _latestFirmware;
+        try
+        {
+            if (FirmwareFeed.Latest(await Http.GetStringAsync(FirmwareFeed.ReleasesUrl)) is { } fw)
+            {
+                LatestFirmware = fw;
+                _feedCheckedAt = DateTime.UtcNow;
+            }
+        }
+        catch (Exception e)
+        {
+            LogLine?.Invoke($"查询 ESP32 固件失败：{e.Message}");
+        }
+        return _latestFirmware;
+    }
+
+    /// <summary>下载并校验固件；已缓存且校验通过的直接用。没网时用缓存里最新的。</summary>
+    private async Task<(string Version, byte[] Image)> ObtainFirmwareAsync()
+    {
+        Directory.CreateDirectory(FirmwareCacheDir);
+        byte[]? Cached(string v)
+        {
+            try
+            {
+                var img = File.ReadAllBytes(Path.Combine(FirmwareCacheDir, FirmwareFeed.AssetName(v)));
+                FirmwareFeed.Verify(img, v, File.ReadAllBytes(Path.Combine(FirmwareCacheDir, v + ".sums")),
+                    File.ReadAllBytes(Path.Combine(FirmwareCacheDir, v + ".sig")));
+                return img;
+            }
+            catch (Exception) { return null; }
+        }
+        if (await RefreshFirmwareFeedAsync(force: true) is { } fw)
+        {
+            if (Cached(fw.Version) is { } c) return (fw.Version, c);
+            var img = await Http.GetByteArrayAsync(fw.Image.BrowserDownloadUrl);
+            var sums = await Http.GetByteArrayAsync(fw.Sums.BrowserDownloadUrl);
+            var sig = await Http.GetByteArrayAsync(fw.Signature.BrowserDownloadUrl);
+            FirmwareFeed.Verify(img, fw.Version, sums, sig);
+            File.WriteAllBytes(Path.Combine(FirmwareCacheDir, FirmwareFeed.AssetName(fw.Version)), img);
+            File.WriteAllBytes(Path.Combine(FirmwareCacheDir, fw.Version + ".sums"), sums);
+            File.WriteAllBytes(Path.Combine(FirmwareCacheDir, fw.Version + ".sig"), sig);
+            return (fw.Version, img);
+        }
+        var versions = Directory.GetFiles(FirmwareCacheDir, "NotiBridge-ESP32-*.bin")
+            .Select(f => Path.GetFileNameWithoutExtension(f)["NotiBridge-ESP32-".Length..])
+            .OrderByDescending(v => v, Comparer<string>.Create((a, b) => UpdateCore.CompareVersions(a, b) ?? 0));
+        foreach (var v in versions) if (Cached(v) is { } c) return (v, c);
+        throw new InvalidOperationException("没有网络，也没有下载过的固件");
+    }
 
     private readonly AppSettings _settings;
     private IReadOnlyList<Esp32Port> _ports = [];
@@ -36,7 +110,7 @@ public sealed partial class Esp32Manager : ObservableObject
     private bool _busy;
     private bool _firmwareMissing;
     private bool _firmwareOk;
-    private string? _firmwareVersion;
+    private string _firmwareVersion = "";
     private double _flashProgress;
     private bool _flashing;
     private Esp32LinkState? _link;
@@ -95,8 +169,9 @@ public sealed partial class Esp32Manager : ObservableObject
     public bool Scanned { get; private set; }
     public double FlashProgress { get => _flashProgress; private set => Set(ref _flashProgress, value); }
     public bool Flashing { get => _flashing; private set => Set(ref _flashing, value); }
-    public bool NeedsFirmwareUpdate => FirmwareOk && FirmwareAvailable && _firmwareVersion != BundledVersion;
-    public string UpdateFirmwareText => $"NotiBridge 附带了新固件 {BundledVersion}";
+    /// <summary>GitHub 上有比板子上更新的固件</summary>
+    public bool NeedsFirmwareUpdate => FirmwareOk && _latestFirmware is { } f && UpdateCore.IsNewer(f.Version, _firmwareVersion);
+    public string UpdateFirmwareText => $"有新固件 {_latestFirmware?.Version}";
 
     // ---- iPhone 连接状态 ----
     public Esp32LinkState? Link
@@ -161,6 +236,7 @@ public sealed partial class Esp32Manager : ObservableObject
     private void SetFound(string version)
     {
         _firmwareVersion = version;
+        _ = RefreshFirmwareFeedAsync();
         FirmwareText = $"已检测到 NotiBridge 固件 {version}";
         FirmwareMissing = false;
         FirmwareOk = true;
@@ -187,15 +263,24 @@ public sealed partial class Esp32Manager : ObservableObject
     /// <summary>刷写随程序打包的固件（ESP32 ROM 下载协议，不需要 esptool）。第一次刷写某块板子前自动备份原固件。</summary>
     public async void Flash()
     {
-        using var stream = typeof(Esp32Manager).Assembly.GetManifestResourceStream(FirmwareResource);
-        if (stream is null)
+        if (Selected is null) return;
+        byte[] image;
+        string version;
+        Busy = true;
+        FirmwareText = "正在下载固件…";
+        try
         {
-            Message = "这个版本的 NotiBridge 没有附带 ESP32 固件。";
+            (version, image) = await ObtainFirmwareAsync();
+        }
+        catch (Exception e)
+        {
+            Busy = false;
+            FirmwareText = $"无法下载固件（{e.Message}）。请检查网络后重试。";
+            FirmwareMissing = true;
             return;
         }
-        var image = new byte[stream.Length];
-        stream.ReadExactly(image);
-        LogLine?.Invoke($"开始刷写 ESP32 固件 {BundledVersion}（{image.Length / 1024} KB）");
+        Busy = false;
+        LogLine?.Invoke($"开始刷写 ESP32 固件 {version}（{image.Length / 1024} KB）");
         var ok = await RunOnBoard(false, (t, stage, log) =>
             EspFirmwareInstaller.Install(image, t, BackupStore, stage, log) switch
             {

@@ -16,9 +16,6 @@ cp "$BIN" "$APP/Contents/MacOS/NotiBridgeMac"
 [ "$CONFIG" = "release" ] && strip -S -x "$APP/Contents/MacOS/NotiBridgeMac"
 cp Support/Info.plist "$APP/Contents/Info.plist"
 cp Support/icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-# ESP32 固件（firmware/esp32/build_firmware.sh 生成），App 里一键刷写
-FW=../firmware/esp32/prebuilt/notibridge-esp32.bin
-if [ -f "$FW" ]; then cp "$FW" "$APP/Contents/Resources/notibridge-esp32.bin"; else echo "警告：没有 $FW，App 将无法刷写 ESP32" >&2; fi
 # 新版 macOS 的通知中心从资源目录 Assets.car（CFBundleIconName）取图标
 xcrun actool --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 14.0 \
   --app-icon AppIcon --output-partial-info-plist build/actool-partial.plist Support/icon/Assets.xcassets >/dev/null

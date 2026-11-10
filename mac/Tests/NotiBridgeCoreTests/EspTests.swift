@@ -391,3 +391,39 @@ final class RealBoardBackupTests: XCTestCase {
         print("用时 \(String(format: "%.1f", Date().timeIntervalSince(t))) 秒")
     }
 }
+
+final class FirmwareFeedTests: XCTestCase {
+    private func release(_ tag: String, draft: Bool = false, pre: Bool = false, files: [String]) -> String {
+        let assets = files.map { #"{"name":"\#($0)","browser_download_url":"https://example.com/\#($0)","size":10}"# }
+        return #"{"tag_name":"\#(tag)","name":"x","html_url":"https://example.com","body":"说明","draft":\#(draft),"prerelease":\#(pre),"assets":[\#(assets.joined(separator: ","))]}"#
+    }
+
+    func testPicksNewestCompleteFirmwareRelease() throws {
+        let full = { (v: String) in ["NotiBridge-ESP32-\(v).bin", "SHA256SUMS.txt", "SHA256SUMS.txt.sig"] }
+        let json = "[" + [
+            release("v1.3.0", files: ["NotiBridge-1.3.0-macOS.dmg", "SHA256SUMS.txt", "SHA256SUMS.txt.sig"]),
+            release("firmware-v1.2.9", draft: true, files: full("1.2.9")),
+            release("firmware-v1.2.8", pre: true, files: full("1.2.8")),
+            release("firmware-v1.2.7", files: ["NotiBridge-ESP32-1.2.7.bin"]),
+            release("firmware-v1.2.2", files: full("1.2.2")),
+            release("firmware-v1.2.10", files: full("1.2.10")),
+        ].joined(separator: ",") + "]"
+        let fw = try XCTUnwrap(FirmwareFeed.latest(fromReleasesJSON: Data(json.utf8)))
+        XCTAssertEqual(fw.version, "1.2.10")
+        XCTAssertEqual(fw.image.name, "NotiBridge-ESP32-1.2.10.bin")
+        XCTAssertNil(try FirmwareFeed.latest(fromReleasesJSON: Data("[]".utf8)))
+    }
+
+    func testVerify() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let pub = key.publicKey.rawRepresentation.base64EncodedString()
+        let image = Data([1, 2, 3])
+        let hash = SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
+        let sums = Data("\(hash)  NotiBridge-ESP32-1.2.2.bin\n".utf8)
+        let sig = Data(try key.signature(for: sums).base64EncodedString().utf8)
+        XCTAssertNoThrow(try FirmwareFeed.verify(image: image, version: "1.2.2", sums: sums, signature: sig, publicKeyBase64: pub))
+        XCTAssertThrowsError(try FirmwareFeed.verify(image: Data([9]), version: "1.2.2", sums: sums, signature: sig, publicKeyBase64: pub))
+        XCTAssertThrowsError(try FirmwareFeed.verify(image: image, version: "1.2.3", sums: sums, signature: sig, publicKeyBase64: pub))
+        XCTAssertThrowsError(try FirmwareFeed.verify(image: image, version: "1.2.2", sums: sums, signature: sig))
+    }
+}

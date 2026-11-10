@@ -55,7 +55,7 @@ struct Esp32Panel: View {
                 .foregroundStyle(.green)
             if esp.needsFirmwareUpdate {
                 HStack {
-                    Text("NotiBridge 附带了新固件 \(Esp32Manager.bundledVersion)").font(.callout)
+                    Text("有新固件 \(esp.latestFirmwareVersion ?? "")").font(.callout)
                     Button("更新固件") { esp.flash() }
                 }
             }

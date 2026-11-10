@@ -52,4 +52,11 @@ ESP32 作为 GATT 客户端订阅 ANCS 的 Data Source 和 Notification Source�
 
 App 内置 ESP32 ROM 下载协议（与 esptool 相同的串口协议，不上传 stub）：RTS/DTR 复位进入下载模式 → SYNC →
 SPI_ATTACH → SPI_SET_PARAMS → 切换到 460800 → FLASH_BEGIN/FLASH_DATA → SPI_FLASH_MD5 校验 → RTS 复位。
-固件镜像是 `firmware/esp32/build_firmware.sh` 合并出的单个文件，从 0x1000 写入。
+固件镜像是 `firmware/esp32/build_firmware.sh` 合并出的单个文件，从 0x1000 写入；板子上已是 NotiBridge 固件时跳过 [0x9000, 0x10000)（NVS 和 phy_init），保留 iPhone 配对。
+
+## 固件发布
+
+固件版本独立于 App（`firmware/esp32/CMakeLists.txt` 的 `PROJECT_VER`），用 `scripts/release_firmware.sh <版本> <说明.md>` 单独发布为
+GitHub Release `firmware-v<版本>`，不标记为 Latest（App 的自动更新只看 Latest）。Release 里有 `NotiBridge-ESP32-<版本>.bin`、
+`SHA256SUMS.txt` 和 `SHA256SUMS.txt.sig`（与 App 同一把 Ed25519 发布密钥）。电脑端安装包不带固件：点“刷写固件”时查询
+`/releases` 里最新的 `firmware-v*`，下载并校验签名和哈希后刷写，并缓存一份供离线使用。
