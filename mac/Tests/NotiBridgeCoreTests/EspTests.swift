@@ -472,3 +472,40 @@ final class UsbSerialChipTests: XCTestCase {
         XCTAssertFalse(m.contains("http"))
     }
 }
+
+final class AudioLinkTests: XCTestCase {
+    func testDemuxMixesLinesAndFrames() {
+        var d = SerialDemux()
+        let f = SerialDemux.encode(type: .audioDown, seq: 0x1234, data: [1, 0xFE, 0x0A, 4])
+        var items = d.feed(Array("@{\"t\":\"call\"}\nW (1) log".utf8) + f.prefix(3))
+        items += d.feed(Array(f.dropFirst(3)) + Array(" tail\n".utf8))
+        XCTAssertEqual(items, [
+            .line("@{\"t\":\"call\"}"),
+            .frame(SerialFrame(type: 1, seq: 0x1234, data: [1, 0xFE, 0x0A, 4])),
+            .line("W (1) log tail"),
+        ])
+        // 长度不合法的帧头被丢弃
+        XCTAssertEqual(d.feed([0xFE, 0xA5, 1, 0xFF, 0xFF, 0, 0] + Array("ok\n".utf8)), [.line("ok")])
+    }
+
+    func testPcmRoundTrip() {
+        let s: [Int16] = [0, 1, -1, .max, .min]
+        XCTAssertEqual(PCM16.samples(PCM16.bytes(s)), s)
+    }
+
+    func testJitterBuffer() {
+        let j = JitterBuffer(sampleRate: 16000, targetMs: 10, maxMs: 30) // 160 / 480 样本
+        XCTAssertEqual(j.pull(10), [Int16](repeating: 0, count: 10)) // 还没攒够，静音
+        j.push([Int16](repeating: 7, count: 100))
+        XCTAssertEqual(j.pull(10).first, 0)
+        j.push([Int16](repeating: 7, count: 100))
+        XCTAssertEqual(j.pull(10), [Int16](repeating: 7, count: 10))
+        // 积压太多：丢到目标余量
+        j.push([Int16](repeating: 8, count: 1000))
+        XCTAssertEqual(j.count, 160)
+        XCTAssertGreaterThan(j.dropped, 0)
+        // 取空：补静音并计一次欠载
+        _ = j.pull(200)
+        XCTAssertEqual(j.underruns, 1)
+    }
+}

@@ -391,6 +391,7 @@ final class Esp32Manager: ObservableObject {
         link = nil
         iphones = []
         hfp = nil
+        updateCallAudio()
         call = .idle
         phones = []
     }
@@ -400,15 +401,23 @@ final class Esp32Manager: ObservableObject {
     /// 删除 ESP32 上保存的所有 iPhone 配对
     func forgetIphones() { send("UNPAIR") }
     // MARK: 通话控制
-    func answer() { send("ANSWER") }
+    /// 在电脑上接听：声音走电脑
+    func answer() {
+        send("AUDIO PC")
+        send("ANSWER")
+    }
     /// 来电时拒接，通话中/呼出时挂断
     func hangUp() { send("HANGUP") }
     func dial(_ number: String) {
         let n = number.filter { "0123456789+*#".contains($0) }
         guard !n.isEmpty, n.count < 32 else { return }
+        send("AUDIO PC")
         send("DIAL \(n)")
     }
-    func redial() { send("REDIAL") }
+    func redial() {
+        send("AUDIO PC")
+        send("REDIAL")
+    }
     func sendDtmf(_ c: Character) { if "0123456789*#".contains(c) { send("DTMF \(c)") } }
     /// 通话声音走电脑还是留在手机上
     func setAudioToPC(_ on: Bool) { send(on ? "AUDIO PC" : "AUDIO PHONE") }
@@ -441,11 +450,23 @@ final class Esp32Manager: ObservableObject {
         linkLock.lock()
         let port = linkPort
         linkLock.unlock()
-        try? port?.write(Array((line + "\n").utf8))
+        if let port { try? write(port, Array((line + "\n").utf8)) }
     }
+
+    /// 所有串口写入都经过这里：文本命令和音频帧不能交错
+    nonisolated private let writeLock = NSLock()
+    nonisolated private func write(_ port: PosixSerialPort, _ bytes: [UInt8]) throws {
+        writeLock.lock(); defer { writeLock.unlock() }
+        try port.write(bytes)
+    }
+
+    /// 通话声音（在 Mac 上播放/采集时不为 nil）
+    nonisolated(unsafe) private var callAudio: CallAudio?
+    nonisolated(unsafe) private var upSeq: UInt16 = 0
 
     nonisolated private func linkLoop(path: String) {
         var announcedError = ""
+        var highBaudFailed = false
         while true {
             let stop: Bool = { self.linkLock.lock(); defer { self.linkLock.unlock() }; return self.linkStop }()
             if stop { return }
@@ -459,21 +480,66 @@ final class Esp32Manager: ObservableObject {
                 linkPort = port
                 linkLock.unlock()
                 usleep(300_000)
-                try port.write(Array("HB?\nSTATE?\nBONDS?\nPHONES?\n".utf8))
+                try write(port, Array("HB?\nSTATE?\nBONDS?\nPHONES?\n".utf8))
                 announcedError = ""
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.linkError = "" } }
-                var splitter = LineSplitter()
-                var lastProbe = Date()
+                var demux = SerialDemux()
+                var lastProbe = Date(), lastWrite = Date(), lastRx = Date()
+                var baud = 115_200
+                var askedHigh = false
+                var verifyDeadline: Date?
                 while true {
-                    let bytes = try port.read(timeout: 0.5)
-                    for line in splitter.feed(bytes) {
-                        guard let e = Esp32LinkParser.parse(line: line) else { continue }
-                        DispatchQueue.main.async { MainActor.assumeIsolated { self.handle(e) } }
+                    let bytes = try port.read(timeout: 0.2)
+                    if !bytes.isEmpty { lastRx = Date() }
+                    for item in demux.feed(bytes) {
+                        switch item {
+                        case let .frame(f):
+                            if f.type == SerialFrameType.audioDown.rawValue { callAudio?.receive(f.data) }
+                        case let .line(line):
+                            // 串口提速：固件 1.3.0 起支持，通话音频需要约 70 KB/s
+                            if line.hasPrefix("HB-ESP32 ") {
+                                verifyDeadline = nil
+                                let v = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
+                                if !askedHigh && !highBaudFailed && baud == 115_200 && (UpdateCore.compareVersions(v, "1.3.0") ?? -1) >= 0 {
+                                    askedHigh = true
+                                    try write(port, Array("BAUD 2000000\n".utf8))
+                                }
+                            }
+                            if line.hasPrefix("@{\"t\":\"baud\""), let r = line.range(of: "\"value\":") {
+                                let v = Int(line[r.upperBound...].prefix { $0.isNumber }) ?? 115_200
+                                usleep(20_000)
+                                try port.setBaud(v)
+                                baud = v
+                                try write(port, Array("HB?\n".utf8))
+                                lastWrite = Date()
+                                verifyDeadline = Date().addingTimeInterval(1.5)
+                            }
+                            guard let e = Esp32LinkParser.parse(line: line) else { continue }
+                            DispatchQueue.main.async { MainActor.assumeIsolated { self.handle(e) } }
+                        }
+                    }
+                    let now = Date()
+                    // 提速后没有回应：USB 芯片不支持这个波特率。停发 4 秒让固件退回 115200
+                    if let d = verifyDeadline, now > d {
+                        verifyDeadline = nil
+                        highBaudFailed = true
+                        try port.setBaud(115_200)
+                        baud = 115_200
+                        sleep(4)
+                        try write(port, Array("HB?\nSTATE?\n".utf8))
+                    }
+                    // 高波特率下每秒发一次心跳；固件 3 秒收不到就自动退回 115200
+                    if baud != 115_200 && now.timeIntervalSince(lastWrite) > 1 {
+                        try write(port, Array("PING\n".utf8))
+                        lastWrite = now
+                    }
+                    if baud != 115_200 && now.timeIntervalSince(lastRx) > 6 {
+                        throw PosixSerialPort.OpenError.open(path, ETIMEDOUT)
                     }
                     // 固件复位后（例如按了 EN）重新获取状态
-                    if Date().timeIntervalSince(lastProbe) > 30 {
-                        lastProbe = Date()
-                        try port.write(Array("STATE?\n".utf8))
+                    if now.timeIntervalSince(lastProbe) > 30 {
+                        lastProbe = now
+                        try write(port, Array("STATE?\n".utf8))
                     }
                 }
             } catch {
@@ -497,6 +563,42 @@ final class Esp32Manager: ObservableObject {
         }
     }
 
+    /// 麦克风帧发给 ESP32（音频线程）
+    nonisolated private func sendUp(_ pcm: [UInt8]) {
+        linkLock.lock()
+        let port = linkPort
+        linkLock.unlock()
+        guard let port else { return }
+        upSeq &+= 1
+        try? write(port, SerialDemux.encode(type: .audioUp, seq: upSeq, data: pcm))
+    }
+
+    /// 根据免提状态开关 Mac 上的通话声音
+    private func updateCallAudio() {
+        let want: Int? = {
+            guard let h = hfp, h.audioToPC else { return nil }
+            switch h.audio {
+            case "msbc": return 16000
+            case "cvsd": return 8000
+            default: return nil
+            }
+        }()
+        if let cur = callAudio, cur.sampleRate == want { return }
+        if let cur = callAudio {
+            cur.stop()
+            callAudio = nil
+        }
+        guard let sr = want else { return }
+        let a = CallAudio(sampleRate: sr) { [weak self] pcm in self?.sendUp(pcm) }
+        a.onLog = { [weak self] s in DispatchQueue.main.async { MainActor.assumeIsolated { self?.onLog?(s) } } }
+        do {
+            try a.start()
+            callAudio = a
+        } catch {
+            onLog?("无法打开麦克风或扬声器：\(error.localizedDescription)")
+        }
+    }
+
     private func handle(_ e: Esp32Event) {
         switch e {
         case let .hello(version, _, _):
@@ -506,6 +608,7 @@ final class Esp32Manager: ObservableObject {
             iphones = list
         case let .hfp(h):
             hfp = h
+            updateCallAudio()
         case let .call(c):
             call = c
             if !c.isIdle { pairCode = nil }
@@ -576,7 +679,7 @@ final class Esp32Manager: ObservableObject {
         usleep(1_500_000)
         tcflush(fd, TCIOFLUSH)
         let probe = Array("HB?\n".utf8)
-        _ = probe.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
+        _ = probe.withUnsafeBufferPointer { Darwin.write(fd, $0.baseAddress, $0.count) }
         var buffer = [UInt8]()
         let deadline = Date().addingTimeInterval(2)
         var chunk = [UInt8](repeating: 0, count: 256)

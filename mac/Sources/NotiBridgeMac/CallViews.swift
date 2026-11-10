@@ -63,7 +63,14 @@ struct CallRow: View {
                     Button("挂断", role: .destructive) { esp.hangUp() }
                 }
             }
-            Text("通话声音目前在手机上，电脑端声音即将支持。").font(.caption).foregroundStyle(.secondary)
+            if c.state == "active" || c.state == "dialing" || c.state == "alerting" {
+                let onPC = esp.hfp?.audioToPC == true
+                HStack {
+                    Label(onPC ? "声音在这台电脑上" : "声音在手机上", systemImage: onPC ? "speaker.wave.2" : "iphone")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(onPC ? "切回手机" : "切到电脑") { esp.setAudioToPC(!onPC) }
+                }
+            }
         } else {
             HStack {
                 TextField("拨打号码", text: $number).frame(maxWidth: 200).onSubmit { esp.dial(number) }
