@@ -40,8 +40,4 @@ object UiPrefs {
         get() = p.getBoolean("onboarded", false)
         set(v) { p.edit().putBoolean("onboarded", v).apply() }
 
-    /** "software" | "esp32" */
-    var useMode: String
-        get() = p.getString("useMode", "software") ?: "software"
-        set(v) { p.edit().putString("useMode", v).apply() }
 }

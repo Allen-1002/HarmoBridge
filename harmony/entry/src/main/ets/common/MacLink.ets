@@ -85,7 +85,7 @@ const ERROR_TEXT: Map<string, string> = new Map<string, string>([
   ['upgrade_required', OUTDATED_TEXT],
   ['outdated', OUTDATED_TEXT],
   ['bad_point', '配对数据无效，请重试'],
-  ['pairing_closed', '电脑未开启配对或配对码已过期，请在电脑上点“配对新手机”'],
+  ['pairing_closed', '电脑未开启配对或配对码已过期，请在电脑上点“添加设备”'],
   ['bad_pin', '配对码错误'],
   ['auth_failed', '认证失败：密钥不匹配，请重新配对'],
   ['replay', '电脑拒绝了重复或乱序的消息'],

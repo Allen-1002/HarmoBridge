@@ -112,7 +112,7 @@ fun ComputersPanel(onPaired: () -> Unit = {}) {
             if (found.isEmpty()) {
                 RowItem(
                     if (searching) "正在查找…" else "没有找到电脑",
-                    "在电脑上打开 NotiBridge 并点“配对新手机”，确认手机和电脑连着同一个 Wi-Fi",
+                    "在电脑上打开 NotiBridge 并点“添加设备”，确认手机和电脑连着同一个 Wi-Fi",
                 )
             }
             found.forEachIndexed { i, f ->
@@ -124,7 +124,7 @@ fun ComputersPanel(onPaired: () -> Unit = {}) {
             Divider()
             RowItem("手动输入电脑地址", "找不到时，输入电脑端显示的 IP 地址", onClick = { manual = true })
         }
-        Hint("配对时手机会生成一次性密钥，和电脑交换后核对 6 位校验码，之后所有通知都加密传输。", Modifier.padding(horizontal = 8.dp))
+        Hint("配对时手机会生成一次性密钥，和电脑交换后核对 8 位校验码，之后所有通知都加密传输。", Modifier.padding(horizontal = 8.dp))
     }
 
     if (manual) ManualDialog(onDismiss = { manual = false }) { h, p ->
@@ -268,7 +268,7 @@ private fun PairDialog(t: PairTarget, onDismiss: () -> Unit, onDone: () -> Unit)
                         Text(if (state == LinkState.PAIRING && sas.isNotEmpty()) "等待电脑确认…" else "正在连接 ${t.host}…")
                     }
                     else -> {
-                        Text("在电脑的 NotiBridge 里点“配对新手机”，输入电脑上显示的 6 位配对码。")
+                        Text("在电脑的 NotiBridge 里点“添加设备”，输入电脑上显示的 6 位配对码。")
                         OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(6) }, label = { Text("配对码") },
                             singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                             textStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace))
@@ -302,7 +302,7 @@ private fun PairDialog(t: PairTarget, onDismiss: () -> Unit, onDone: () -> Unit)
 
 private fun describe(code: String): String = when (code) {
     "bad_pin" -> "配对码错误，请核对电脑上显示的配对码"
-    "pairing_closed" -> "电脑未开启配对或配对码已过期，请在电脑上重新点“配对新手机”"
+    "pairing_closed" -> "电脑未开启配对或配对码已过期，请在电脑上重新点“添加设备”"
     "连接失败", "连接超时" -> "连不上电脑，确认电脑端已打开、和手机连着同一个 Wi-Fi"
     "outdated" -> com.xsh.notibridge.core.OUTDATED_TEXT
     else -> com.xsh.notibridge.core.ERROR_TEXT[code] ?: code

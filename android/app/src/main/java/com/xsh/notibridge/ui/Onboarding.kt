@@ -51,10 +51,9 @@ private class Step(val title: String, val desc: String)
 
 private val STEPS = listOf(
     Step("欢迎使用 NotiBridge", "把手机通知安全地同步到你的 Mac 或 Windows 电脑，可以同时连接多台。数据只在你自己的设备之间加密传输，不经过任何服务器。"),
-    Step("选择使用方式", "纯软件即可同步通知和验证码。想在电脑上接打电话，需要额外的 ESP32 模块。之后可以在设置里更改。"),
     Step("允许读取通知", "在系统设置的“通知使用权”里找到 NotiBridge 并打开。安卓会提示这项权限可以读取所有通知内容，NotiBridge 只把它们加密发给你配对的电脑。"),
     Step("允许后台运行", "部分手机会在后台清理通知监听。允许 NotiBridge 不受电池优化限制，熄屏后也能及时同步。"),
-    Step("连接电脑", "在电脑上打开 NotiBridge，点“配对新手机”。之后可以在“电脑连接”里继续添加其他电脑。"),
+    Step("连接电脑", "在电脑上打开 NotiBridge，点“添加设备”，选择“安卓 / 鸿蒙手机”。之后可以在“电脑连接”里继续添加其他电脑。"),
     Step("设置完成", "之后不需要保持 App 打开，熄屏或切到后台后，通知也会自动同步到电脑。"),
 )
 
@@ -63,7 +62,6 @@ fun OnboardingScreen(resumeTick: Int, startStep: Int = 0, onFinish: () -> Unit) 
     val ctx = LocalContext.current
     // “继续设置”从第一个还没完成的步骤开始，不再从欢迎页重来
     var step by remember { mutableIntStateOf(startStep.coerceIn(0, STEPS.size - 1)) }
-    var mode by remember { mutableStateOf(UiPrefs.useMode) }
     rememberDataTick()
     @Suppress("UNUSED_EXPRESSION") resumeTick // 从系统设置回来时刷新权限状态
     val granted = NotifyListener.isGranted(ctx)
@@ -72,8 +70,8 @@ fun OnboardingScreen(resumeTick: Int, startStep: Int = 0, onFinish: () -> Unit) 
     val scroll = rememberScrollState()
 
     val canNext = when (step) {
-        2 -> granted
-        4 -> paired
+        1 -> granted
+        3 -> paired
         else -> true
     }
     fun finish() {
@@ -90,7 +88,7 @@ fun OnboardingScreen(resumeTick: Int, startStep: Int = 0, onFinish: () -> Unit) 
                 }
             }
             Spacer(Modifier.weight(1f))
-            if (step in 1 until STEPS.size - 1 && !(step == 4 && paired)) {
+            if (step in 1 until STEPS.size - 1 && !(step == 3 && paired)) {
                 TextButton(onClick = { finish() }) { Text("稍后设置") }
             }
         }
@@ -115,15 +113,6 @@ fun OnboardingScreen(resumeTick: Int, startStep: Int = 0, onFinish: () -> Unit) 
                     }
                 }
                 1 -> {
-                    ModeOption(mode == "software", Icons.Filled.Notifications, "纯软件（推荐）",
-                        "同步通知、验证码自动复制。不需要任何额外硬件。不能接打电话。") { mode = "software"; UiPrefs.useMode = "software" }
-                    ModeOption(mode == "esp32", Icons.Filled.Phone, "使用 ESP32",
-                        "在上面的基础上，还可以在电脑上接听、拨打电话。需要一块 ESP32 模块插在电脑 USB 上，由电脑端 NotiBridge 自动检测并刷写固件。") {
-                        mode = "esp32"; UiPrefs.useMode = "esp32"
-                    }
-                    if (mode == "esp32") Hint("ESP32 通话固件尚在开发中，目前可以先完成检测流程；固件发布后在电脑端一键刷写即可。")
-                }
-                2 -> {
                     Hero(Icons.Filled.Lock)
                     SectionCard {
                         RowItem("通知使用权", trailing = { Chip(if (granted) "已开启" else "未开启", if (granted) Success else Warning) })
@@ -133,7 +122,7 @@ fun OnboardingScreen(resumeTick: Int, startStep: Int = 0, onFinish: () -> Unit) 
                     }
                     Hint("如果系统提示“受限设置”，先到 设置 › 应用 › NotiBridge 右上角菜单里点“允许受限设置”，再回来开启。")
                 }
-                3 -> {
+                2 -> {
                     SectionCard {
                         RowItem("不受电池优化限制", trailing = { Chip(if (battery) "已允许" else "未允许", if (battery) Success else Warning) })
                         Button(onClick = { Perms.requestIgnoreBattery(ctx) }, enabled = !battery,
@@ -141,7 +130,7 @@ fun OnboardingScreen(resumeTick: Int, startStep: Int = 0, onFinish: () -> Unit) 
                     }
                     Hint("小米、华为、OPPO、vivo 等手机还可能需要在系统的“自启动 / 后台运行”管理里允许 NotiBridge。")
                 }
-                4 -> ComputersPanel()
+                3 -> ComputersPanel()
                 else -> {
                     Hero(Icons.Filled.CheckCircle)
                     Text("可以试试让朋友给你发一条消息，电脑上会立即弹出通知。", color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -187,16 +176,5 @@ private fun PermLine(name: String, tag: String, reason: String) {
             Chip(tag, if (tag == "必需") Danger else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Hint(reason)
-    }
-}
-
-@Composable
-private fun ModeOption(selected: Boolean, icon: ImageVector, title: String, desc: String, onClick: () -> Unit) {
-    val border = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
-    Box(Modifier.clip(RoundedCornerShape(20.dp)).border(2.dp, border, RoundedCornerShape(20.dp)).clickable(onClick = onClick)) {
-        SectionCard {
-            RowItem(title, desc, leading = { Icon(icon, null, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) },
-                trailing = { if (selected) Icon(Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary) })
-        }
     }
 }

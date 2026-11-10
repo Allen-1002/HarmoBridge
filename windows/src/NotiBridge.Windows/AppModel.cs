@@ -130,6 +130,10 @@ public sealed class AppModel : ObservableObject
         _notifier = new Notifier(Log);
         Esp32.LogLine += Log;
         Esp32.Event += HandleEsp32;
+        Esp32.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(Esp32Manager.Iphones) or nameof(Esp32Manager.UseEsp32)) RaiseStatus();
+        };
         Updater = new Updater(_settings, Log)
         {
             // 正在配对手机时不更新（更新会重启程序，打断配对）
@@ -156,7 +160,7 @@ public sealed class AppModel : ObservableObject
         if (HasRepairNotice)
         {
             Log(RepairNotice);
-            _notifier.ShowLocal(RepairNotice, "1.1.0 是安全更新，旧配对已清除。请在电脑上点“配对新手机”，并把手机也更新到 1.1.0 后重新配对。");
+            _notifier.ShowLocal(RepairNotice, "1.1.0 是安全更新，旧配对已清除。请在电脑上点“添加设备”，并把手机也更新到 1.1.0 后重新配对。");
         }
     }
 
@@ -219,16 +223,24 @@ public sealed class AppModel : ObservableObject
     public string PrimaryAddress => MdnsAdvertiser.PrimaryIPv4()?.ToString() ?? "未连接网络";
 
     public int OnlineCount => Devices.Count(d => d.IsOnline);
-    public bool HasDevices => Devices.Count > 0;
+    /// <summary>ESP32 模式下经 ESP32 配对的 iPhone 数量（纯软件模式为 0）</summary>
+    public int IphoneCount => Esp32.UseEsp32 ? Esp32.Iphones.Count : 0;
+    /// <summary>手机 App + iPhone</summary>
+    public int DeviceCount => Devices.Count + IphoneCount;
+    public bool HasDevices => DeviceCount > 0;
+
+    /// <summary>请主窗口打开“添加设备”（托盘菜单用）</summary>
+    public event Action? AddDeviceRequested;
+    public void RequestAddDevice() => AddDeviceRequested?.Invoke();
 
     public string Headline
     {
         get
         {
             if (Paused) return "同步已暂停";
-            if (Devices.Count == 0) return "还没有配对手机";
-            var online = OnlineCount;
-            return online > 0 ? $"{online} 台手机在线" : "正在待命";
+            if (!HasDevices) return "还没有设备";
+            var online = OnlineCount + (Esp32.UseEsp32 ? Esp32.Iphones.Count(p => p.AncsReady) : 0);
+            return online > 0 ? $"{online} 台设备在线" : "正在待命";
         }
     }
 
@@ -236,9 +248,9 @@ public sealed class AppModel : ObservableObject
     {
         get
         {
-            if (Devices.Count == 0) return "点“配对新手机”，在手机 NotiBridge 里输入配对码";
+            if (!HasDevices) return "点“添加设备”配对安卓、鸿蒙手机或 iPhone";
             var t = _lastSync is { } s ? $"最近同步 {s.LocalDateTime:HH:mm}" : "有通知时手机会自动连接";
-            return $"已配对 {Devices.Count} 台手机 · {t}";
+            return $"{DeviceCount} 台设备 · {t}";
         }
     }
 
@@ -255,6 +267,8 @@ public sealed class AppModel : ObservableObject
     private void RaiseStatus()
     {
         Raise(nameof(OnlineCount));
+        Raise(nameof(IphoneCount));
+        Raise(nameof(DeviceCount));
         Raise(nameof(HasDevices));
         Raise(nameof(Headline));
         Raise(nameof(SubHeadline));

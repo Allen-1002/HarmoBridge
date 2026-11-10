@@ -35,11 +35,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 引导里第一个还没完成的必需步骤：2 = 通知使用权，4 = 连接电脑 */
+    /** 引导里第一个还没完成的必需步骤：1 = 通知使用权，3 = 连接电脑 */
     private fun firstUnfinishedStep(): Int = when {
-        !NotifyListener.isGranted(this) -> 2
-        NotiApp.instance.store.pairedComputers().isEmpty() -> 4
-        else -> 3
+        !NotifyListener.isGranted(this) -> 1
+        NotiApp.instance.store.pairedComputers().isEmpty() -> 3
+        else -> 2
     }
 
     override fun onResume() {

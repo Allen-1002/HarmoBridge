@@ -52,6 +52,9 @@ final class AppModel: ObservableObject {
     @Published var notificationsAllowed = "未知"
     @Published var loginItemEnabled = false
     @Published var showContentInList = false
+    /// “添加设备”弹窗（主窗口里显示）
+    @Published var showAddDevice = false
+    @Published var addDeviceKind: AddDeviceKind?
     // 通话（实验）
     @Published var callState: CallState = .unavailable("未连接")
     @Published var btDevices: [BTDevice] = []
@@ -142,7 +145,7 @@ final class AppModel: ObservableObject {
         log(Self.repairNoticeText)
         showFrontAlert(
             title: Self.repairNoticeText,
-            text: "NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下了配对过程也无法离线猜出配对码，并加了双向防重放。旧的配对已失效并已清除。\n\n请在这台电脑上点“配对新手机”，再在每台手机上（也要更新到 1.1.0）重新配对一次。")
+            text: "NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下了配对过程也无法离线猜出配对码，并加了双向防重放。旧的配对已失效并已清除。\n\n请在这台电脑上点“添加设备”，再在每台手机上（也要更新到 1.1.0）重新配对一次。")
     }
 
     /// 菜单栏应用（accessory）弹出的对话框容易被当前窗口挡住：激活应用、提到浮动层级并强制置前

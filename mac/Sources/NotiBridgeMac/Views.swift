@@ -179,18 +179,18 @@ extension AppModel {
     var statusColor: Color {
         if paused { return .orange }
         if isPhoneOnline { return .green }
-        return pairedDevices.isEmpty ? .gray : .blue
+        return hasAnyDevice ? .blue : .gray
     }
 
     /// 主状态卡片的玻璃染色
     var heroTint: Color {
-        if pairedDevices.isEmpty { return Color.gray.opacity(0.55) }
+        if !hasAnyDevice { return Color.gray.opacity(0.55) }
         if paused { return Color.orange.opacity(0.75) }
         return Color(red: 0.16, green: 0.42, blue: 0.95).opacity(0.8)
     }
 
     var headline: String {
-        if pairedDevices.isEmpty { return "尚未配对手机" }
+        if !hasAnyDevice { return "还没有设备" }
         return paused ? "同步已暂停" : "通知同步中"
     }
 }
@@ -257,7 +257,7 @@ struct StatusMenu: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .tint(.white.opacity(0.4))
-                .disabled(model.pairedDevices.isEmpty)
+                .disabled(!model.hasAnyDevice)
         }
         .padding(16)
         .hbGlass(RoundedRectangle(cornerRadius: 20, style: .continuous), tint: model.heroTint)
@@ -348,11 +348,10 @@ struct StatusMenu: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Button {
-                model.pairingPin == nil ? model.openPairing() : model.cancelPairing()
+                model.openAddDevice()
+                openMain()
             } label: {
-                Label(model.pairingPin == nil ? "配对新手机" : "取消配对",
-                      systemImage: model.pairingPin == nil ? "plus" : "xmark")
-                    .frame(maxWidth: .infinity)
+                Label("添加设备", systemImage: "plus").frame(maxWidth: .infinity)
             }
             .hbGlassButton()
             Button {
@@ -425,11 +424,10 @@ struct CallControls: View {
 
 enum SidebarItem: String, CaseIterable, Identifiable {
     case overview = "概览"
-    case records = "通知记录"
     case devices = "设备与配对"
+    case esp32 = "ESP32 模块"
+    case records = "通知记录"
     case filters = "过滤规则"
-    case phone = "电话（实验）"
-    case logs = "日志"
     case settings = "设置"
 
     var id: String { rawValue }
@@ -439,9 +437,8 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .overview: return "square.grid.2x2"
         case .records: return "bell.badge"
         case .devices: return "iphone.and.arrow.forward"
+        case .esp32: return "cpu"
         case .filters: return "line.3.horizontal.decrease.circle"
-        case .phone: return "phone"
-        case .logs: return "doc.text.magnifyingglass"
         case .settings: return "gearshape"
         }
     }
@@ -472,16 +469,19 @@ struct MainWindow: View {
                 switch selection ?? .overview {
                 case .overview: OverviewView(selection: $selection)
                 case .records: RecordsView()
-                case .devices: DevicesView()
+                case .devices: DevicesView(openEsp32: { selection = .esp32 })
+                case .esp32: Esp32Page(esp: model.esp32)
                 case .filters: FilterTab()
-                case .phone: PhoneTab()
-                case .logs: LogTab()
                 case .settings: SettingsView()
                 }
             }
             .navigationTitle((selection ?? .overview).rawValue)
         }
         .frame(minWidth: 780, minHeight: 540)
+        .sheet(isPresented: $model.showAddDevice) {
+            AddDeviceSheet(openEsp32: { selection = .esp32 })
+                .environmentObject(model)
+        }
     }
 }
 
@@ -500,18 +500,19 @@ struct OverviewView: View {
                         StatCard(value: model.todayShown, label: "今日已显示", icon: "bell.fill", color: .blue)
                         StatCard(value: model.todayOtp, label: "验证码已复制", icon: "key.fill", color: .teal)
                         StatCard(value: model.todayFiltered, label: "已过滤", icon: "line.3.horizontal.decrease", color: .orange)
-                        StatCard(value: model.pairedDevices.count, label: "已配对手机", icon: "iphone", color: .purple)
+                        StatCard(value: model.deviceCount, label: "设备", icon: "iphone", color: .purple)
                     }
 
                     // 快捷操作
                     SectionTitle("快捷操作")
                     HStack(spacing: 12) {
-                        QuickAction(title: "配对新手机", icon: "plus.circle.fill", color: .blue) {
-                            model.openPairing()
-                            selection = .devices
+                        QuickAction(title: "添加设备", icon: "plus.circle.fill", color: .blue) {
+                            model.openAddDevice()
                         }
-                        QuickAction(title: "打开蓝牙设置", icon: "dot.radiowaves.left.and.right", color: .indigo) {
-                            model.openBluetoothSettings()
+                        if model.esp32.mode == .esp32 {
+                            QuickAction(title: "ESP32 模块", icon: "cpu", color: .indigo) {
+                                selection = .esp32
+                            }
                         }
                         QuickAction(title: "测试 Mac 通知", icon: "bell.and.waves.left.and.right", color: .pink) {
                             model.sendLocalTestNotification()
@@ -561,7 +562,7 @@ struct OverviewView: View {
                 .labelsHidden()
                 .controlSize(.large)
                 .tint(.white.opacity(0.4))
-                .disabled(model.pairedDevices.isEmpty)
+                .disabled(!model.hasAnyDevice)
         }
         .padding(24)
         .hbGlass(RoundedRectangle(cornerRadius: 26, style: .continuous), tint: model.heroTint)
@@ -709,87 +710,11 @@ struct RecordsView: View {
     }
 }
 
-struct DevicesView: View {
-    @EnvironmentObject var model: AppModel
-    @State private var renaming: PairingStore.Device?
-    @State private var newName = ""
-
-    var body: some View {
-        Form {
-            Section("已配对的手机") {
-                if model.pairedDevices.isEmpty {
-                    Text("还没有配对的手机").foregroundStyle(.secondary)
-                }
-                ForEach(model.pairedDevices) { d in
-                    HStack {
-                        Image(systemName: "iphone").font(.title2).foregroundStyle(Color.accentColor)
-                        VStack(alignment: .leading) {
-                            Text(model.displayName(d.id))
-                            let status = model.onlineDevices[d.id] != nil ? "已连接" : model.phoneStatusText
-                            Text(model.displayName(d.id) != d.name ? "\(d.name) · \(status)" : status)
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("改名") {
-                            newName = model.displayName(d.id)
-                            renaming = d
-                        }
-                        Button("取消配对", role: .destructive) { model.unpair(d) }
-                    }
-                }
-                if let pin = model.pairingPin {
-                    PairingPanel(pin: pin, sas: model.pairingSas)
-                    Button("取消") { model.cancelPairing() }
-                } else {
-                    Button {
-                        model.openPairing()
-                    } label: {
-                        Label("配对新手机", systemImage: "plus")
-                    }
-                }
-            }
-            Section {
-                LabeledContent("Mac 蓝牙名称", value: model.macBluetoothName)
-                Button {
-                    model.openBluetoothSettings()
-                } label: {
-                    Label("打开 Mac 蓝牙设置", systemImage: "dot.radiowaves.left.and.right")
-                }
-            } header: {
-                Text("蓝牙")
-            } footer: {
-                Text("手机需要和 Mac 蓝牙配对一次，作为系统要求的通知订阅设备。打开 Mac 的蓝牙设置页面并保持打开，手机 NotiBridge 的“蓝牙设备 > 扫描”就能找到这台 Mac。")
-            }
-            Section("局域网") {
-                LabeledContent("服务", value: model.listening)
-                LabeledContent("本机地址", value: model.localAddresses().joined(separator: "\n"))
-            }
-        }
-        .formStyle(.grouped)
-        .hbPageBackground()
-        .alert("给手机改名", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("名字", text: $newName)
-            Button("保存") {
-                if let d = renaming { model.rename(d, to: newName) }
-                renaming = nil
-            }
-            if let d = renaming, model.displayName(d.id) != d.name {
-                Button("恢复原名") {
-                    model.rename(d, to: "")
-                    renaming = nil
-                }
-            }
-            Button("取消", role: .cancel) { renaming = nil }
-        } message: {
-            Text("名字只保存在这台电脑上。配对了多台手机时，通知会用这个名字标出来源。")
-        }
-    }
-}
-
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @State private var confirmReset = false
     @State private var confirmUninstall = false
+    @State private var showLogs = false
 
     private static let deletedItems = "将删除：所有已配对手机的密钥（本机配对文件，以及旧版留在钥匙串里的）、这台 Mac 的设备标识、全部设置（过滤规则、同步开关、使用方式等）、应用图标缓存、登录时启动项，以及通知中心里的 NotiBridge 通知。所有手机都需要重新配对。"
 
@@ -807,15 +732,12 @@ struct SettingsView: View {
             }
             Section {
                 Picker("使用方式", selection: Binding(get: { model.esp32.mode }, set: { model.esp32.mode = $0 })) {
-                    ForEach(UseMode.allCases) { m in Text(m.title).tag(m) }
-                }
-                if model.esp32.mode == .esp32 {
-                    Esp32Panel(esp: model.esp32)
+                    ForEach(UseMode.allCases) { m in Text(m.label).tag(m) }
                 }
             } header: {
-                Text("ESP32 通话模块")
+                Text("使用方式")
             } footer: {
-                Text(model.esp32.mode == .software ? UseMode.software.detail : "ESP32 把 iPhone 的通知转到这台 Mac（蓝牙 ANCS）。通话功能还在开发中。")
+                Text(model.esp32.mode.summary + (model.esp32.mode == .esp32 ? " 板子、固件和 iPhone 在侧边栏“ESP32 模块”里管理。" : ""))
             }
             Section("系统") {
                 Toggle("登录时自动启动", isOn: Binding(get: { model.loginItemEnabled }, set: { model.setLoginItem($0) }))
@@ -824,6 +746,12 @@ struct SettingsView: View {
                 Button("重新运行首次启动引导（检查权限）") { model.restartOnboarding() }
             }
             UpdateSection(updater: model.updater)
+            Section("诊断") {
+                LabeledContent("局域网服务", value: model.listening)
+                LabeledContent("本机地址", value: model.localAddresses().joined(separator: "\n"))
+                LabeledContent("Mac 蓝牙名称", value: model.macBluetoothName)
+                Button("查看日志") { showLogs = true }
+            }
             Section("关于") {
                 LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")
                 Text("通知只在你的手机和这台 Mac 之间加密传输，不经过任何服务器。检查更新时只访问 GitHub（api.github.com），不发送任何个人数据。")
@@ -840,6 +768,14 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .hbPageBackground()
+        .sheet(isPresented: $showLogs) {
+            VStack(alignment: .trailing, spacing: 0) {
+                LogTab()
+                Button("关闭") { showLogs = false }.keyboardShortcut(.cancelAction).padding(12)
+            }
+            .frame(width: 640, height: 460)
+            .environmentObject(model)
+        }
         .confirmationDialog("清除所有数据并重新开始？", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("清除并重新开始", role: .destructive) { model.resetAndRelaunch() }
             Button("取消", role: .cancel) {}
@@ -972,50 +908,5 @@ struct LogTab: View {
             }
         }
         .hbPageBackground()
-    }
-}
-
-struct PhoneTab: View {
-    @EnvironmentObject var model: AppModel
-    @State private var number = ""
-
-    var body: some View {
-        Form {
-            Section {
-                Text("实验功能：Mac 作为蓝牙免提设备（HFP）连接手机，不需要 ESP32。手机需先与 Mac 蓝牙配对。")
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Picker("手机", selection: $model.selectedBT) {
-                        Text("请选择").tag("")
-                        ForEach(model.btDevices) { d in
-                            Text("\(d.name)  \(d.id)").tag(d.id)
-                        }
-                    }
-                    Button("刷新") { model.refreshBTDevices() }
-                }
-                HStack {
-                    Button("连接免提") { model.connectCall() }
-                    Button("断开") { model.disconnectCall() }
-                }
-                LabeledContent("状态", value: model.callState.label)
-            }
-            Section("通话") {
-                HStack {
-                    Button("接听") { model.answerCall() }
-                    Button("挂断 / 拒接") { model.hangUpCall() }
-                }
-                HStack {
-                    TextField("号码", text: $number)
-                    Button("拨号") { model.dial(number) }
-                }
-                HStack {
-                    Button("音频切到 Mac") { model.audioToMac() }
-                    Button("音频切回手机") { model.audioToPhone() }
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .hbPageBackground()
-        .onAppear { if model.btDevices.isEmpty { model.refreshBTDevices() } }
     }
 }

@@ -98,28 +98,28 @@
                     <!-- 使用方式 -->
                     <StackPanel x:Name="ObMode" Visibility="Collapsed">
                         <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
-                                   Text="之后可以在 设置 里更改。手机端也可以选择同样的方式。" />
+                                   Text="之后可以在 设置 里更改。手机上的 NotiBridge 不需要做选择。" />
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <RadioButton GroupName="UseMode" IsChecked="{Binding Esp32.UseSoftware}" FontWeight="SemiBold" Content="纯软件（推荐）" />
                                 <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13"
-                                           Text="同步通知、验证码自动复制，不需要任何额外硬件。不能接打电话。" />
+                                           Text="同步安卓、鸿蒙手机的通知，验证码自动复制。不需要额外硬件。" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <RadioButton GroupName="UseMode" IsChecked="{Binding Esp32.UseEsp32}" FontWeight="SemiBold" Content="使用 ESP32" />
+                                <RadioButton GroupName="UseMode" IsChecked="{Binding Esp32.UseEsp32}" FontWeight="SemiBold" Content="ESP32 模式" />
                                 <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13"
-                                           Text="需要一块 ESP32 模块插在电脑 USB 上，由 NotiBridge 刷写固件。iPhone 通过蓝牙把通知交给 ESP32，再转到电脑；以后还会支持在电脑上接打电话（开发中）。" />
+                                           Text="在纯软件的基础上，增加 iPhone 通知（经 ESP32 模块），以及所有手机在电脑上接打电话（即将支持）。需要一块插在电脑 USB 上的 ESP32 模块。" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
                     <!-- ESP32 -->
                     <StackPanel x:Name="ObEsp" Visibility="Collapsed">
                         <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
-                                   Text="用支持数据传输的 USB 线把 ESP32 模块连接到这台电脑，然后检测。第一次使用先刷写固件，然后按提示在 iPhone 上配对。也可以直接下一步，稍后在 设置 里完成。" />
+                                   Text="用支持数据传输的 USB 线把 ESP32 模块连接到这台电脑，插上后会自动检测。第一次使用点“刷写固件”。也可以直接下一步，稍后在侧边栏“ESP32 模块”里完成。" />
                         <Border Style="{StaticResource Card}">
-                            <local:Esp32Panel DataContext="{Binding Esp32}" />
+                            <local:Esp32Panel DataContext="{Binding Esp32}" ShowAddIphone="False" />
                         </Border>
                     </StackPanel>
                     <!-- 2 通知 -->
@@ -147,22 +147,10 @@
                             <Button Content="打开网络设置" Click="OnOpenNetwork" Margin="0,0,8,0" Padding="16,8" />
                         </StackPanel>
                     </StackPanel>
-                    <!-- 4 蓝牙 -->
-                    <StackPanel x:Name="Ob3" Visibility="Collapsed">
-                        <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
-                                   Text="安卓手机可以直接下一步。鸿蒙系统要求“读取通知”必须绑定一台已配对的蓝牙设备，但通知本身走局域网加密传输，平时不需要蓝牙连接。" />
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock TextWrapping="Wrap" Text="• 手机已经绑定过其他电脑（例如 Mac）：直接下一步，不需要再配对蓝牙。" Margin="0,0,0,6" />
-                                <TextBlock TextWrapping="Wrap" Text="• 还没有绑定：打开电脑的蓝牙设置 → 添加设备，在手机 设置 &gt; 蓝牙 中选择这台电脑完成配对，然后在手机 NotiBridge 里选择它。" />
-                            </StackPanel>
-                        </Border>
-                        <Button Content="打开蓝牙设置" Click="OnOpenBluetooth" HorizontalAlignment="Left" Padding="16,8" />
-                    </StackPanel>
                     <!-- 5 配对 -->
                     <StackPanel x:Name="Ob4" Visibility="Collapsed">
                         <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
-                                   Text="在手机 NotiBridge 里点“添加电脑”，选择这台电脑并输入下面的配对码。也可以跳过，稍后在“设备与配对”里配对。" />
+                                   Text="之后可以随时在“设备与配对”里继续添加。" />
                         <ContentControl x:Name="ObPairingHost" />
                     </StackPanel>
                     <!-- 6 完成 -->
@@ -194,10 +182,10 @@
                 <ListBox x:Name="Nav" SelectionChanged="OnNav" BorderThickness="0" Background="Transparent"
                          ItemContainerStyle="{StaticResource NavItem}">
                     <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE80F;" /><TextBlock Text="概览" /></StackPanel></ListBoxItem>
-                    <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xEA8F;" /><TextBlock Text="通知记录" /></StackPanel></ListBoxItem>
                     <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8EA;" /><TextBlock Text="设备与配对" /></StackPanel></ListBoxItem>
+                    <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE950;" /><TextBlock Text="ESP32 模块" /></StackPanel></ListBoxItem>
+                    <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xEA8F;" /><TextBlock Text="通知记录" /></StackPanel></ListBoxItem>
                     <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE71C;" /><TextBlock Text="过滤规则" /></StackPanel></ListBoxItem>
-                    <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xEA37;" /><TextBlock Text="日志" /></StackPanel></ListBoxItem>
                     <ListBoxItem><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE713;" /><TextBlock Text="设置" /></StackPanel></ListBoxItem>
                 </ListBox>
             </DockPanel>
@@ -206,18 +194,6 @@
                 <!-- 概览 -->
                 <ScrollViewer x:Name="Page0" VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="24,20,28,24">
-                        <!-- 1.1.0 安全升级：旧配对已清除，需要重新配对 -->
-                        <Border CornerRadius="10" Padding="16,12" Margin="0,0,0,14" Background="#FFF4E5" BorderBrush="#F59E0B"
-                                BorderThickness="1" Visibility="{Binding HasRepairNotice, Converter={StaticResource BoolToVis}}">
-                            <DockPanel>
-                                <Button DockPanel.Dock="Right" Content="知道了" Click="OnDismissRepairNotice" VerticalAlignment="Center" />
-                                <StackPanel Margin="0,0,12,0">
-                                    <TextBlock Text="{Binding RepairNotice}" FontWeight="SemiBold" Foreground="#92400E" TextWrapping="Wrap" />
-                                    <TextBlock Text="1.1.0 改用更安全的配对方式（CPace），旧配对已失效并已清除。请点“配对新手机”，并把每台手机也更新到 1.1.0 后重新配对。"
-                                               Foreground="#92400E" TextWrapping="Wrap" Margin="0,4,0,0" />
-                                </StackPanel>
-                            </DockPanel>
-                        </Border>
                         <Border CornerRadius="12" Padding="22" Margin="0,0,0,14" Background="{StaticResource HeroBrush}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -247,7 +223,7 @@
                                 <StackPanel><TextBlock Style="{StaticResource StatValue}" Text="{Binding TodayFiltered}" Foreground="#F59E0B" /><TextBlock Style="{StaticResource Hint}" Text="已过滤" /></StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}" Margin="8,0,0,12">
-                                <StackPanel><TextBlock Style="{StaticResource StatValue}" Text="{Binding Devices.Count}" Foreground="#8B5CF6" /><TextBlock Style="{StaticResource Hint}" Text="已配对手机" /></StackPanel>
+                                <StackPanel><TextBlock Style="{StaticResource StatValue}" Text="{Binding DeviceCount}" Foreground="#8B5CF6" /><TextBlock Style="{StaticResource Hint}" Text="设备" /></StackPanel>
                             </Border>
                         </UniformGrid>
 
@@ -260,8 +236,9 @@
 
                         <TextBlock Style="{StaticResource Section}" Text="快捷操作" />
                         <WrapPanel Margin="0,0,0,8">
-                            <Button Content="配对新手机" Click="OnPairFromOverview" Margin="0,0,8,8" Padding="16,8" Style="{DynamicResource AccentButtonStyle}" />
-                            <Button Content="打开蓝牙设置" Click="OnOpenBluetooth" Margin="0,0,8,8" Padding="16,8" />
+                            <Button Content="添加设备" Click="OnAddFromOverview" Margin="0,0,8,8" Padding="16,8" Style="{DynamicResource AccentButtonStyle}" />
+                            <Button Content="ESP32 模块" Click="OnShowEsp32" Margin="0,0,8,8" Padding="16,8"
+                                    Visibility="{Binding Esp32.UseEsp32, Converter={StaticResource BoolToVis}}" />
                             <Button Content="测试 Windows 通知" Click="OnTestNotification" Margin="0,0,8,8" Padding="16,8" />
                         </WrapPanel>
 
@@ -303,41 +280,10 @@
                 <ScrollViewer x:Name="Page2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="24,20,28,24">
                         <TextBlock Style="{StaticResource PageTitle}" Text="设备与配对" />
-                        <ContentControl x:Name="PairingHost">
-                            <!-- 配对面板（引导页与此处共用，由代码移动） -->
-                            <Border x:Name="PairingPanel" Style="{StaticResource Card}">
-                                <StackPanel>
-                                    <StackPanel Visibility="{Binding IsPairing, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="在手机上输入配对码" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding PairingPin}" FontSize="44" FontWeight="Bold" FontFamily="Consolas, Segoe UI"
-                                                   Margin="0,8,0,0" />
-                                        <TextBlock Text="{Binding PairingRemaining}" Style="{StaticResource Hint}" />
-                                        <Border Visibility="{Binding HasSas, Converter={StaticResource BoolToVis}}" Margin="0,14,0,0" Padding="12"
-                                                CornerRadius="6" BorderThickness="1" BorderBrush="#F59E0B">
-                                            <StackPanel>
-                                                <TextBlock Text="请核对校验码" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding PairingSas}" FontSize="30" FontWeight="Bold" FontFamily="Consolas, Segoe UI" Margin="0,4" />
-                                                <TextBlock Style="{StaticResource Hint}" Text="确认与手机上显示的校验码完全一致后，在手机上点“一致，确认”。不一致说明连接可能被冒充，请取消。" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Button Content="取消配对" Click="OnCancelPairing" HorizontalAlignment="Left" Margin="0,14,0,0" />
-                                    </StackPanel>
-                                    <StackPanel x:Name="PairIdle">
-                                        <TextBlock Text="配对新手机" FontWeight="SemiBold" />
-                                        <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,10"
-                                                   Text="点下面的按钮生成 6 位配对码（2 分钟有效，输错 3 次作废）。在手机 NotiBridge 中选择“添加电脑”，自动发现这台电脑后输入配对码；找不到时手动填写下面的地址。" />
-                                        <TextBlock Margin="0,0,0,10"><Run Text="本机地址：" /><Run Text="{Binding PrimaryAddress, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="  端口：" /><Run Text="{Binding Port, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
-                                        <Button Content="生成配对码" Click="OnOpenPairing" HorizontalAlignment="Left" Padding="16,8"
-                                                Style="{DynamicResource AccentButtonStyle}" />
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
-                        </ContentControl>
-
-                        <TextBlock Style="{StaticResource Section}" Text="已配对的手机" />
+                        <TextBlock Style="{StaticResource Section}" Text="我的设备" />
                         <Border Style="{StaticResource Card}">
-                            <Grid>
-                                <TextBlock x:Name="NoDevicesHint" Text="还没有配对手机" Style="{StaticResource Hint}" FontSize="13" />
+                            <StackPanel>
+                                <TextBlock x:Name="NoDevicesHint" Text="还没有设备。在下面选择要添加的手机类型。" Style="{StaticResource Hint}" FontSize="13" />
                                 <ItemsControl ItemsSource="{Binding Devices}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
@@ -354,19 +300,143 @@
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                                                     <TextBlock Text="{Binding StatusText}" Style="{StaticResource Hint}" />
+                                                    <TextBlock Text="通知 ✓  ·  通话 即将支持" Style="{StaticResource Hint}" FontSize="11" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                                     <Button Content="改名" Click="OnRename" Tag="{Binding}" Margin="0,0,8,0" />
-                                                    <Button Content="取消配对" Click="OnUnpair" Tag="{Binding}" />
+                                                    <Button Content="移除" Click="OnUnpair" Tag="{Binding}" />
                                                 </StackPanel>
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                            </Grid>
+                                <ItemsControl x:Name="IphoneDevices">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Style="{StaticResource Avatar}" Background="#4B5563">
+                                                    <TextBlock Text="i" Foreground="White" FontWeight="Bold" FontSize="16"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding Status}" Style="{StaticResource Hint}" />
+                                                    <TextBlock Text="{Binding Caps}" Style="{StaticResource Hint}" FontSize="11" />
+                                                </StackPanel>
+                                                <Button Grid.Column="2" Content="移除" Click="OnRemoveIphone" Tag="{Binding}" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                         </Border>
-                        <TextBlock Style="{StaticResource Hint}"
-                                   Text="手机 App 不在前台时，通知由系统按需拉起的订阅扩展连接转发，所以“待命”不等于收不到通知。取消配对会同步到手机：手机在线时立即从手机上删除这台电脑，不在线时下次连接时自动删除。" />
+                        <TextBlock x:Name="DevicesFooter" Style="{StaticResource Hint}" />
+
+                        <TextBlock Style="{StaticResource Section}" Text="添加设备" />
+                        <ContentControl x:Name="AddDeviceHost">
+                            <!-- 添加设备面板（引导页与此处共用，由代码移动） -->
+                            <Border x:Name="AddDevicePanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <!-- 选择类型 -->
+                                    <StackPanel x:Name="AddChooser">
+                                        <TextBlock Text="要添加哪种手机？" FontWeight="SemiBold" />
+                                        <WrapPanel Margin="0,10,0,0">
+                                            <Button Click="OnAddPhone" Padding="16,10" Margin="0,0,8,8" HorizontalContentAlignment="Left" Width="300">
+                                                <StackPanel>
+                                                    <TextBlock Text="安卓 / 鸿蒙手机" FontWeight="SemiBold" />
+                                                    <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap" Text="在手机上安装 NotiBridge App，同一 Wi-Fi 下输入配对码。" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Click="OnAddIphone" Padding="16,10" Margin="0,0,8,8" HorizontalContentAlignment="Left" Width="300">
+                                                <StackPanel>
+                                                    <TextBlock Text="iPhone" FontWeight="SemiBold" />
+                                                    <TextBlock x:Name="AddIphoneHint" Style="{StaticResource Hint}" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Button>
+                                        </WrapPanel>
+                                    </StackPanel>
+
+                                    <!-- 安卓 / 鸿蒙 -->
+                                    <StackPanel x:Name="AddPhoneFlow" Visibility="Collapsed">
+                                        <Button Content="‹ 换一种设备" Click="OnAddBack" HorizontalAlignment="Left" Margin="0,0,0,12" />
+                                        <TextBlock x:Name="AddPhoneDone" Visibility="Collapsed" Foreground="#16A34A" FontWeight="SemiBold" FontSize="15" />
+                                        <StackPanel x:Name="AddPhoneSteps">
+                                            <TextBlock TextWrapping="Wrap" Text="① 在手机上打开 NotiBridge，点“添加电脑”，选择这台电脑。手机和电脑需要在同一个 Wi-Fi（局域网）下。" />
+                                            <TextBlock TextWrapping="Wrap" Margin="0,6,0,12" Text="② 在手机上输入下面的配对码，然后核对两边显示的校验码一致。" />
+                                            <StackPanel Visibility="{Binding IsPairing, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="配对码" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding PairingPin}" FontSize="44" FontWeight="Bold" FontFamily="Consolas, Segoe UI" Margin="0,4,0,0" />
+                                                <TextBlock Text="{Binding PairingRemaining}" Style="{StaticResource Hint}" />
+                                                <Border Visibility="{Binding HasSas, Converter={StaticResource BoolToVis}}" Margin="0,14,0,0" Padding="12"
+                                                        CornerRadius="6" BorderThickness="1" BorderBrush="#F59E0B">
+                                                    <StackPanel>
+                                                        <TextBlock Text="请核对校验码" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding PairingSas}" FontSize="30" FontWeight="Bold" FontFamily="Consolas, Segoe UI" Margin="0,4" />
+                                                        <TextBlock Style="{StaticResource Hint}" Text="确认与手机上显示的校验码完全一致后，在手机上点“一致，确认”。不一致说明连接可能被冒充，请取消。" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+                                            <StackPanel x:Name="PairIdle">
+                                                <TextBlock Style="{StaticResource Hint}" Text="配对码已过期。" Margin="0,0,0,8" />
+                                                <Button Content="重新生成配对码" Click="OnOpenPairing" HorizontalAlignment="Left" Padding="16,8"
+                                                        Style="{DynamicResource AccentButtonStyle}" />
+                                            </StackPanel>
+                                            <TextBlock Margin="0,12,0,0" Style="{StaticResource Hint}"><Run Text="手机找不到这台电脑时手动填写：" /><Run Text="{Binding PrimaryAddress, Mode=OneWay}" FontWeight="SemiBold" /><Run Text="  端口 " /><Run Text="{Binding Port, Mode=OneWay}" FontWeight="SemiBold" /></TextBlock>
+                                            <Expander Header="鸿蒙手机还需要绑定一台蓝牙设备（安卓不需要）" Margin="0,12,0,0">
+                                                <StackPanel Margin="0,8,0,0">
+                                                    <TextBlock TextWrapping="Wrap" Style="{StaticResource Hint}" FontSize="13"
+                                                               Text="鸿蒙系统要求读取通知时绑定一台已配对的蓝牙设备，通知本身仍走局域网。手机已经绑定过其他电脑（例如 Mac）就不用再做。否则：打开电脑的蓝牙设置 → 添加设备，在手机 设置 &gt; 蓝牙 中选择这台电脑完成配对，然后在手机 NotiBridge 的“蓝牙设备”里选择它。" />
+                                                    <Button Content="打开蓝牙设置" Click="OnOpenBluetooth" HorizontalAlignment="Left" Margin="0,8,0,0" />
+                                                </StackPanel>
+                                            </Expander>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- iPhone（经 ESP32） -->
+                                    <StackPanel x:Name="AddIphoneFlow" Visibility="Collapsed">
+                                        <Button Content="‹ 换一种设备" Click="OnAddBack" HorizontalAlignment="Left" Margin="0,0,0,12" />
+                                        <TextBlock x:Name="IphoneFlowTitle" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="IphoneFlowText" Style="{StaticResource Hint}" TextWrapping="Wrap" FontSize="13" Margin="0,4,0,0" />
+                                        <StackPanel x:Name="IphoneFlowSteps" Visibility="Collapsed" Margin="0,4,0,0">
+                                            <TextBlock TextWrapping="Wrap" Text="① 在 iPhone 上打开「设置 › 蓝牙」，在“其他设备”里点“NotiBridge”，然后点“配对”。" />
+                                            <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" Text="② 弹出“共享系统通知”时选择“允许”（错过了可以点 NotiBridge 右边的 ⓘ 打开“共享系统通知”）。" />
+                                        </StackPanel>
+                                        <Button x:Name="IphoneFlowAction" Click="OnIphoneAction" HorizontalAlignment="Left" Padding="16,8" Margin="0,12,0,0"
+                                                Style="{DynamicResource AccentButtonStyle}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </ContentControl>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- ESP32 模块 -->
+                <ScrollViewer x:Name="PageEsp" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="24,20,28,24">
+                        <TextBlock Style="{StaticResource PageTitle}" Text="ESP32 模块" />
+                        <StackPanel Visibility="{Binding Esp32.UseEsp32, Converter={StaticResource BoolToVis}}">
+                            <Border Style="{StaticResource Card}">
+                                <local:Esp32Panel x:Name="EspPagePanel" DataContext="{Binding Esp32}" />
+                            </Border>
+                            <Button Content="关闭 ESP32 模式（只用纯软件）" Click="OnDisableEsp32" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <Border Style="{StaticResource Card}" Visibility="{Binding Esp32.UseSoftware, Converter={StaticResource BoolToVis}}">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" FontSize="14"
+                                           Text="一块几十元的 ESP32 开发板，插在电脑 USB 上，由 NotiBridge 一键刷写固件。启用后在纯软件的基础上增加：" />
+                                <TextBlock TextWrapping="Wrap" Margin="0,10,0,0" Text="•  iPhone 通知：iPhone 在蓝牙设置里和 ESP32 配对，不用装 App" />
+                                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Text="•  通话：所有手机都能在电脑上接打电话（即将支持）" />
+                                <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,10,0,0"
+                                           Text="推荐带 USB 串口芯片（CH340 / CP210x）的 ESP32-WROOM-32 开发板。安卓、鸿蒙手机的通知照常通过局域网同步。" />
+                                <Button Content="启用 ESP32 模式" Click="OnEnableEsp32" HorizontalAlignment="Left" Padding="16,8" Margin="0,12,0,0"
+                                        Style="{DynamicResource AccentButtonStyle}" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
 
@@ -415,13 +485,6 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- 日志 -->
-                <DockPanel x:Name="Page4" Visibility="Collapsed" Margin="24,20,28,24">
-                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource PageTitle}" Text="日志" />
-                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="0,-8,0,12" Text="日志不记录通知标题和正文。" />
-                    <ListBox ItemsSource="{Binding Logs}" FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" />
-                </DockPanel>
-
                 <!-- 设置 -->
                 <ScrollViewer x:Name="Page5" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="24,20,28,24">
@@ -434,16 +497,15 @@
                         </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="ESP32 通话模块" FontWeight="SemiBold" />
-                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseSoftware}" Content="纯软件：同步通知和验证码，不能接打电话" Margin="0,8,0,0" />
-                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseEsp32}" Content="使用 ESP32：接收 iPhone 通知（通话功能开发中）" Margin="0,4,0,8" />
-                                <local:Esp32Panel DataContext="{Binding Esp32}"
-                                                  Visibility="{Binding Esp32.UseEsp32, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock Text="使用方式" FontWeight="SemiBold" />
+                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseSoftware}" Content="纯软件：安卓、鸿蒙手机的通知" Margin="0,8,0,0" />
+                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseEsp32}" Content="ESP32 模式：再加 iPhone 通知，以及通话（即将支持）" Margin="0,4,0,0" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0" Text="板子、固件和 iPhone 在侧边栏“ESP32 模块”里管理。" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="网络" FontWeight="SemiBold" />
+                                <TextBlock Text="诊断" FontWeight="SemiBold" />
                                 <TextBlock Text="{Binding Listening}" Margin="0,6,0,0" />
                                 <TextBlock Text="{Binding Addresses}" Style="{StaticResource Hint}" Margin="0,4,0,8" />
                                 <TextBlock Style="{StaticResource Hint}" Text="手机连不上时：确认两者在同一 Wi-Fi，Windows 防火墙已允许 NotiBridge 访问“专用网络”，并且当前网络不是“公用网络”。" />
@@ -452,6 +514,9 @@
                                     <Button Content="通知设置" Click="OnOpenNotificationSettings" Margin="0,0,8,0" />
                                     <Button Content="蓝牙设置" Click="OnOpenBluetooth" />
                                 </StackPanel>
+                                <Expander Header="日志（不记录通知标题和正文）" Margin="0,12,0,0">
+                                    <ListBox ItemsSource="{Binding Logs}" FontFamily="Consolas, Microsoft YaHei UI" FontSize="12" Height="260" Margin="0,8,0,0" />
+                                </Expander>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">

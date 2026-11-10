@@ -1,48 +1,91 @@
 <UserControl x:Class="NotiBridge.Windows.Esp32Panel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- DataContext = Esp32Manager。引导页和设置页共用。 -->
+    <!-- DataContext = Esp32Manager。ESP32 模块页和首次引导共用。
+         状态卡：板子 → 固件 → iPhone → 通话，每一行只在需要处理时给出按钮。 -->
+    <UserControl.Resources>
+        <Style x:Key="RowTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Width" Value="64" />
+        </Style>
+        <Style x:Key="RowHint" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+    </UserControl.Resources>
     <StackPanel>
-        <WrapPanel>
-            <Button x:Name="ScanButton" Content="检测已连接的 ESP32" Click="OnScan" IsEnabled="{Binding NotBusy}" Padding="16,8" Margin="0,0,10,8" />
-            <TextBlock Text="{Binding Message}" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="460" Margin="0,0,0,8"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-        </WrapPanel>
-        <StackPanel Visibility="{Binding HasPorts, Converter={StaticResource BoolToVis}}">
-            <ComboBox ItemsSource="{Binding Ports}" SelectedItem="{Binding Selected}" IsEnabled="{Binding NotBusy}" MinWidth="320" HorizontalAlignment="Left" Margin="0,0,0,8" />
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <Button Content="检测固件" Click="OnCheck" IsEnabled="{Binding NotBusy}" Margin="0,0,8,0" />
-                <Button Content="刷写固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" />
+        <!-- 板子 -->
+        <DockPanel Margin="0,0,0,12">
+            <TextBlock x:Name="BoardMark" Width="22" FontWeight="Bold" />
+            <TextBlock Style="{StaticResource RowTitle}" Text="板子" />
+            <StackPanel>
+                <TextBlock x:Name="BoardText" Style="{StaticResource RowHint}" />
+                <ComboBox x:Name="PortBox" ItemsSource="{Binding Ports}" SelectedItem="{Binding Selected}" IsEnabled="{Binding NotBusy}"
+                          MinWidth="320" HorizontalAlignment="Left" Margin="0,6,0,0" SelectionChanged="OnPortChanged" />
             </StackPanel>
-            <ProgressBar Value="{Binding FlashProgress, Mode=OneWay}" Maximum="1" Height="6" MaxWidth="420" HorizontalAlignment="Stretch"
-                         Margin="0,0,0,6" Visibility="{Binding Flashing, Converter={StaticResource BoolToVis}}" />
-            <TextBlock Text="{Binding FirmwareText}" TextWrapping="Wrap" FontWeight="SemiBold" />
-            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Visibility="{Binding NeedsFirmwareUpdate, Converter={StaticResource BoolToVis}}">
-                <TextBlock Text="{Binding UpdateFirmwareText}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                <Button Content="更新固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" />
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Visibility="{Binding FirmwareMissing, Converter={StaticResource BoolToVis}}">
-                <Button Content="刷写固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" Margin="0,0,8,0" />
-                <Button Content="不刷写，稍后再说" Click="OnSkip" />
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Visibility="{Binding HasBackups, Converter={StaticResource BoolToVis}}">
-                <Button Content="还原原固件" Click="OnRestore" IsEnabled="{Binding NotBusy}" Margin="0,0,8,0" />
-                <Button Content="打开备份文件夹" Click="OnReveal" Margin="0,0,8,0" />
-                <TextBlock Text="{Binding BackupText}" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-            </StackPanel>
-            <!-- iPhone 连接 -->
-            <StackPanel Margin="0,12,0,0" Visibility="{Binding ShowIphone, Converter={StaticResource BoolToVis}}">
-                <TextBlock Text="{Binding LinkText}" FontWeight="SemiBold" />
-                <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Visibility="{Binding PairHintVisible, Converter={StaticResource BoolToVis}}"
-                           Text="在 iPhone 上打开「设置 › 蓝牙」，点 NotiBridge 并允许配对，然后在弹窗里允许共享通知（或在 NotiBridge 右边的 ⓘ 里打开“共享系统通知”）。配对窗口约 3 分钟。" />
-                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <Button Content="配对新的 iPhone" Click="OnPair" Margin="0,0,8,0" />
-                    <Button Content="删除 iPhone 配对" Click="OnForget" Visibility="{Binding HasBonds, Converter={StaticResource BoolToVis}}" />
+        </DockPanel>
+        <!-- 固件 -->
+        <DockPanel Margin="0,0,0,12">
+            <TextBlock x:Name="FirmwareMark" Width="22" FontWeight="Bold" />
+            <TextBlock Style="{StaticResource RowTitle}" Text="固件" />
+            <StackPanel>
+                <TextBlock Text="{Binding FirmwareText}" Style="{StaticResource RowHint}" />
+                <ProgressBar Value="{Binding FlashProgress, Mode=OneWay}" Maximum="1" Height="6" MaxWidth="420" HorizontalAlignment="Stretch"
+                             Margin="0,6,0,0" Visibility="{Binding Flashing, Converter={StaticResource BoolToVis}}" />
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0" Visibility="{Binding NeedsFirmwareUpdate, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding UpdateFirmwareText}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <Button Content="更新固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" />
+                </StackPanel>
+                <StackPanel x:Name="FlashRow" Margin="0,6,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="CheckButton" Content="检测固件" Click="OnCheck" IsEnabled="{Binding NotBusy}" Margin="0,0,8,0" />
+                        <Button Content="刷写固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" Style="{DynamicResource AccentButtonStyle}" />
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource RowHint}" FontSize="12" Margin="0,6,0,0"
+                               Text="第一次刷写某块板子前会先自动备份板子上原有的固件（约 1~3 分钟），之后可以在“高级”里一键还原。" />
                 </StackPanel>
             </StackPanel>
-        </StackPanel>
-        <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Text="第一次使用先点“刷写固件”。第一次刷写某块板子前会先自动备份板子上原有的固件（约 1~3 分钟），之后可以一键还原。已经刷写过的模块直接点“检测固件”。" />
+        </DockPanel>
+        <!-- iPhone -->
+        <DockPanel Margin="0,0,0,12">
+            <TextBlock x:Name="IphoneMark" Width="22" FontWeight="Bold" />
+            <TextBlock Style="{StaticResource RowTitle}" Text="iPhone" />
+            <StackPanel>
+                <TextBlock x:Name="IphoneText" Style="{StaticResource RowHint}" />
+                <ItemsControl x:Name="IphoneList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Margin="0,2,0,0" TextWrapping="Wrap">
+                                <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=" · " /><Run Text="{Binding Status, Mode=OneWay}" />
+                            </TextBlock>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button x:Name="AddIphoneButton" Content="添加 iPhone" Click="OnAddIphone" HorizontalAlignment="Left" Margin="0,8,0,0" />
+            </StackPanel>
+        </DockPanel>
+        <!-- 通话 -->
+        <DockPanel Margin="0,0,0,8">
+            <TextBlock Width="22" Text="○" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <TextBlock Style="{StaticResource RowTitle}" Text="通话" />
+            <TextBlock Style="{StaticResource RowHint}" Text="即将支持：安卓、鸿蒙和 iPhone 都能在电脑上接打电话" />
+        </DockPanel>
+        <!-- 高级 -->
+        <Expander Header="高级" Margin="0,4,0,0">
+            <StackPanel Margin="0,8,0,0">
+                <WrapPanel>
+                    <Button Content="重新检测" Click="OnScan" IsEnabled="{Binding NotBusy}" Margin="0,0,8,8" />
+                    <Button Content="重新刷写固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" Margin="0,0,8,8" />
+                    <Button x:Name="ForgetAllButton" Content="删除全部 iPhone 配对" Click="OnForget" Margin="0,0,8,8" />
+                </WrapPanel>
+                <WrapPanel>
+                    <Button Content="还原原固件" Click="OnRestore" IsEnabled="{Binding NotBusy}" Margin="0,0,8,8"
+                            Visibility="{Binding HasBackups, Converter={StaticResource BoolToVis}}" />
+                    <Button Content="打开备份文件夹" Click="OnReveal" Margin="0,0,8,8" />
+                    <TextBlock x:Name="BackupInfo" VerticalAlignment="Center" FontSize="12" Margin="0,0,0,8"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                </WrapPanel>
+            </StackPanel>
+        </Expander>
     </StackPanel>
 </UserControl>

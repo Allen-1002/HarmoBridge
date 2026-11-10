@@ -1,15 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// Mac 端首次启动引导：欢迎 → 选择使用方式（纯软件 / ESP32）→ [ESP32 检测与刷写] → 一次性申请全部权限 → 配对手机 → 完成。
+/// Mac 端首次启动引导：欢迎 → 选择使用方式（纯软件 / ESP32）→ 一次性申请所需权限 → [ESP32 检测与刷写] → 添加第一台设备 → 完成。
 struct OnboardingView: View {
     @EnvironmentObject var model: AppModel
     @StateObject private var perms = PermissionCenter()
     @State private var step = 0
 
-    private let titles = ["欢迎使用 NotiBridge", "选择使用方式", "连接 ESP32 模块", "授予所需权限", "配对你的手机", "设置完成"]
+    private let titles = ["欢迎使用 NotiBridge", "选择使用方式", "授予所需权限", "连接 ESP32 模块", "添加第一台设备", "设置完成"]
     // 步骤编号
-    private let stepMode = 1, stepEsp = 2, stepPerms = 3, stepPair = 4
+    private let stepMode = 1, stepPerms = 2, stepEsp = 3, stepPair = 4
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,8 +52,8 @@ struct OnboardingView: View {
                     }
                 }
                 Spacer()
-                if step == stepPair && model.pairedDevices.isEmpty {
-                    Button("稍后配对") { step += 1 }
+                if step == stepPair && !model.hasAnyDevice {
+                    Button("稍后添加") { step += 1 }
                 }
                 Button(nextTitle) { next() }
                     .keyboardShortcut(.defaultAction)
@@ -82,51 +82,31 @@ struct OnboardingView: View {
             model.finishOnboarding()
             return
         }
-        if step == stepPair { model.cancelPairing() }
         step += 1
         // 纯软件模式跳过 ESP32 步骤
         if step == stepEsp && model.esp32.mode == .software { step += 1 }
-        if step == stepEsp && !model.esp32.scanned { model.esp32.scan() }
-        if step == stepPair && model.pairedDevices.isEmpty && model.pairingPin == nil {
-            model.openPairing()
-        }
     }
 
     // MARK: - 步骤
 
     private var modeChoice: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("之后可以在 设置 里更改。手机端也可以选择同样的方式。").foregroundStyle(.secondary)
+            Text("之后可以在 设置 里更改。手机上的 NotiBridge 不需要做选择。").foregroundStyle(.secondary)
             ForEach(UseMode.allCases) { m in
-                Button {
+                KindOption(icon: m == .software ? "bell.badge.fill" : "cpu",
+                           color: m == .software ? .blue : .green,
+                           title: m == .software ? "纯软件（推荐）" : "ESP32 模式",
+                           detail: m.summary,
+                           selected: model.esp32.mode == m) {
                     model.esp32.mode = m
-                } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: m == .software ? "bell.badge.fill" : "phone.fill")
-                            .font(.title2).frame(width: 32)
-                            .foregroundStyle(m == .software ? .blue : .green)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(m.title).font(.headline)
-                            Text(m.detail).font(.callout).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        Image(systemName: model.esp32.mode == m ? "checkmark.circle.fill" : "circle")
-                            .font(.title2)
-                            .foregroundStyle(model.esp32.mode == m ? Color.accentColor : .secondary)
-                    }
-                    .padding(14)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .hbGlass(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
     }
 
     private var esp32Step: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("用支持数据传输的 USB 线把 ESP32 模块连接到这台 Mac，然后检测。第一次使用先刷写固件，然后按提示在 iPhone 上配对。也可以直接下一步，稍后在 设置 里完成。")
+            Text("用支持数据传输的 USB 线把 ESP32 模块连接到这台 Mac，插上后会自动检测。第一次使用点“刷写固件”。也可以直接下一步，稍后在侧边栏“ESP32 模块”里完成。")
                 .foregroundStyle(.secondary)
             Esp32Panel(esp: model.esp32)
         }
@@ -188,37 +168,21 @@ struct OnboardingView: View {
                 status: perms.loginItem,
                 action: ("开启", { perms.setLoginItem(true) }),
                 settings: { perms.openSystemSettings("com.apple.LoginItems-Settings.extension") })
-            PermissionRow(
-                icon: "mic.fill", color: .pink, title: "麦克风", tag: "可选",
-                reason: "仅用于实验性的通话功能（在 Mac 上接听手机来电）。不使用通话可以不开。",
-                status: perms.microphone,
-                action: ("允许", { perms.requestMicrophone() }),
-                settings: { perms.openSystemSettings("com.apple.preference.security?Privacy_Microphone") })
+            if model.esp32.mode == .esp32 {
+                PermissionRow(
+                    icon: "mic.fill", color: .pink, title: "麦克风", tag: "可选",
+                    reason: "仅用于 ESP32 模式的通话功能（即将支持），在 Mac 上接打电话时使用。现在可以先不开。",
+                    status: perms.microphone,
+                    action: ("允许", { perms.requestMicrophone() }),
+                    settings: { perms.openSystemSettings("com.apple.preference.security?Privacy_Microphone") })
+            }
         }
     }
 
     private var pairing: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let d = model.pairedDevices.first {
-                CardBox {
-                    Label("已配对：\(d.name)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("可以点“下一步”完成设置。").foregroundStyle(.secondary)
-                }
-            } else {
-                Text("在手机上安装 NotiBridge 并按引导完成前几步，到“连接 Mac”时输入下面的配对码。")
-                    .foregroundStyle(.secondary)
-                if let pin = model.pairingPin {
-                    PairingPanel(pin: pin, sas: model.pairingSas)
-                } else {
-                    Button("重新生成配对码") { model.openPairing() }
-                }
-                CardBox {
-                    Label("鸿蒙手机还需要一台蓝牙配对设备（安卓手机不需要）", systemImage: "dot.radiowaves.left.and.right").font(.headline)
-                    Text("推荐用这台 Mac：打开 Mac 的蓝牙设置并保持页面打开，在手机 NotiBridge 的“蓝牙设备 > 扫描”中找到“\(model.macBluetoothName)”并配对。")
-                        .foregroundStyle(.secondary)
-                    Button("打开 Mac 蓝牙设置") { model.openBluetoothSettings() }.hbGlassButton()
-                }
-            }
+            Text("之后可以随时在“设备与配对”里继续添加。").foregroundStyle(.secondary)
+            AddDeviceFlow(esp: model.esp32, initialKind: model.esp32.mode == .esp32 ? .iphone : .phoneApp)
         }
     }
 

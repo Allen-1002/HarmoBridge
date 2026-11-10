@@ -33,7 +33,7 @@ val ERROR_TEXT = mapOf(
     "unknown_device" to UNKNOWN_DEVICE_TEXT,
     "upgrade_required" to OUTDATED_TEXT,
     "bad_point" to "配对数据无效，请重试",
-    "pairing_closed" to "电脑未开启配对或配对码已过期，请在电脑上点“配对新手机”",
+    "pairing_closed" to "电脑未开启配对或配对码已过期，请在电脑上点“添加设备”",
     "bad_pin" to "配对码错误",
     "auth_failed" to "认证失败：密钥不匹配，请重新配对",
     "replay" to "电脑拒绝了重复或乱序的消息",

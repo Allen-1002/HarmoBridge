@@ -290,12 +290,12 @@ export struct MacPanel {
 
   private pairingHint(): string {
     if (this.platform === 'windows') {
-      return '在 Windows 电脑上打开 NotiBridge，右键任务栏托盘图标 →“配对新手机”（或主窗口“设备与配对”→“生成配对码”），屏幕上会出现 6 位配对码。';
+      return '在 Windows 电脑上打开 NotiBridge，右键任务栏托盘图标 →“添加设备”（或主窗口“设备与配对”），选择“安卓 / 鸿蒙手机”，屏幕上会出现 6 位配对码。';
     }
     if (this.platform === 'mac') {
-      return '在 Mac 菜单栏点 NotiBridge 图标 →“配对新手机”，屏幕上会出现 6 位配对码。';
+      return '在 Mac 菜单栏点 NotiBridge 图标 →“添加设备”，选择“安卓 / 鸿蒙手机”，屏幕上会出现 6 位配对码。';
     }
-    return 'Mac：点菜单栏 NotiBridge 图标 →“配对新手机”。Windows：右键任务栏托盘图标 →“配对新手机”。屏幕上会出现 6 位配对码。';
+    return '在电脑上打开 NotiBridge，点“添加设备”（Mac 在菜单栏图标里，Windows 在任务栏托盘图标的右键菜单里），选择“安卓 / 鸿蒙手机”。屏幕上会出现 6 位配对码。';
   }
 
   private isPaired(m: FoundMac): boolean {
