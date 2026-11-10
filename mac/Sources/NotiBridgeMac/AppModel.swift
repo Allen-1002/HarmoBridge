@@ -252,7 +252,11 @@ final class AppModel: ObservableObject {
     /// 手机显示名：自定义了名字就用自定义名字，否则用手机配对时报告的名字。
     func displayName(_ id: String) -> String {
         if let a = deviceAliases[id], !a.isEmpty { return a }
-        if id == Self.iphoneDeviceId { return "iPhone" }
+        if id.hasPrefix(Self.iphoneDeviceId) {
+            // 经 ESP32 的 iPhone：用 ESP32 读到的 iPhone 名字
+            let addr = id.dropFirst(Self.iphoneDeviceId.count + 1)
+            return esp32.iphones.first { $0.id == addr }?.displayName ?? "iPhone"
+        }
         return pairedDevices.first { $0.id == id }?.name ?? String(id.prefix(8))
     }
 
@@ -271,7 +275,7 @@ final class AppModel: ObservableObject {
     /// 配对了多台手机时，通知里才标出来源手机
     func sourceLabel(_ deviceId: String) -> String? {
         // 同时有局域网手机和经 ESP32 的 iPhone 时也标出来源
-        let sources = pairedDevices.count + (esp32.mode == .esp32 ? 1 : 0)
+        let sources = pairedDevices.count + (esp32.mode == .esp32 ? max(1, esp32.iphones.count) : 0)
         guard sources > 1, !deviceId.isEmpty else { return nil }
         return displayName(deviceId)
     }
@@ -577,7 +581,9 @@ final class AppModel: ObservableObject {
 
     // MARK: - 经 ESP32 收到的 iPhone 通知（ANCS）
 
+    /// 经 ESP32 的 iPhone 的来源 id："iphone:<蓝牙地址>"（旧固件没有地址时为 "iphone"）
     static let iphoneDeviceId = "iphone"
+    private static func iphoneSource(_ peer: String) -> String { peer.isEmpty ? iphoneDeviceId : "\(iphoneDeviceId):\(peer)" }
     private var lastIphoneBle = ""
 
     private func handleEsp32(_ e: Esp32Event) {
@@ -593,14 +599,14 @@ final class AppModel: ObservableObject {
                         log("已跳过银行/支付类验证码（\(m.appName)）")
                     } else {
                         _ = handleOtp(OtpCode(id: m.id, bundleName: m.bundleName, appName: m.appName, code: code),
-                                      from: Self.iphoneDeviceId)
+                                      from: Self.iphoneSource(n.peer))
                     }
                     return
                 }
             }
-            _ = present(m, from: Self.iphoneDeviceId)
-        case let .removed(uid):
-            let key = scopedId(Self.iphoneDeviceId, "ios-\(uid)")
+            _ = present(m, from: Self.iphoneSource(n.peer))
+        case let .removed(uid, peer):
+            let key = scopedId(Self.iphoneSource(peer), "ios-\(uid)")
             notifier.remove([key])
             deduper.remove(key)
         case let .state(s):
@@ -615,7 +621,8 @@ final class AppModel: ObservableObject {
     }
 
     private func scopedId(_ deviceId: String, _ id: String) -> String {
-        "\(deviceId.prefix(8))-\(id)"
+        // iPhone 的来源 id 前 8 位相同，要用完整 id 区分不同的 iPhone
+        deviceId.hasPrefix(Self.iphoneDeviceId) ? "\(deviceId)-\(id)" : "\(deviceId.prefix(8))-\(id)"
     }
 
     private func present(_ original: MirroredNotification, from deviceId: String) -> String {

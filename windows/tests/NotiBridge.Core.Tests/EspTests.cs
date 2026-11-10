@@ -202,14 +202,16 @@ public class EspTests
         Assert.Null(Esp32LinkParser.Parse("@{broken"));
         Assert.Null(Esp32LinkParser.Parse("""@{"t":"notif","uid":-1}"""));
         Assert.Equal(new Esp32Event.Removed(9), Esp32LinkParser.Parse("""@{"t":"removed","uid":9}"""));
+        Assert.Equal(new Esp32Event.Removed(9, "51:a8:27:cd:73:e0"), Esp32LinkParser.Parse("""@{"t":"removed","uid":9,"peer":"51:a8:27:cd:73:e0"}"""));
         Assert.Equal(new Esp32Event.Error("auth", "x"), Esp32LinkParser.Parse("""@{"t":"err","code":"auth","msg":"x"}"""));
     }
 
     [Fact]
     public void ParseNotification()
     {
-        var e = Esp32LinkParser.Parse("""@{"t":"notif","ev":"add","uid":4294967295,"flags":4,"cat":4,"app":"com.tencent.xin","appName":"微信","title":"张三","sub":"群聊","msg":"晚上吃饭？\n\"好\"","date":"20261110T094500","pos":"","neg":"清除"}""");
+        var e = Esp32LinkParser.Parse("""@{"t":"notif","ev":"add","uid":4294967295,"flags":4,"cat":4,"app":"com.tencent.xin","appName":"微信","title":"张三","sub":"群聊","msg":"晚上吃饭？\n\"好\"","date":"20261110T094500","pos":"","neg":"清除","peer":"51:a8:27:cd:73:e0"}""");
         var n = Assert.IsType<Esp32Event.Notification>(e).Item;
+        Assert.Equal("51:a8:27:cd:73:e0", n.Peer);
         Assert.Equal(4294967295u, n.Uid);
         Assert.True(n.PreExisting);
         var m = n.Mirrored();

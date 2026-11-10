@@ -7,7 +7,8 @@ public enum Esp32Event: Equatable {
     case state(Esp32LinkState)
     case bonds([PairedIphone])
     case notification(IphoneNotification)
-    case removed(uid: UInt32)
+    /// peer：发来的 iPhone 地址（固件 1.2.3 起；旧固件为空）
+    case removed(uid: UInt32, peer: String)
     case acted(uid: UInt32, action: Int)
     case error(code: String, message: String)
 }
@@ -74,6 +75,8 @@ public struct IphoneNotification: Equatable {
     public var date: String
     public var positiveLabel: String
     public var negativeLabel: String
+    /// 发来通知的 iPhone 地址（对应 PairedIphone.id；固件 1.2.3 起才有）
+    public var peer: String = ""
 
     /// 连接时 iPhone 补发的已有通知（不弹出，只记录）
     public var preExisting: Bool { flags & Self.flagPreExisting != 0 }
@@ -130,7 +133,7 @@ public enum Esp32LinkParser {
             return .notification(IphoneNotification(
                 uid: uid, modified: s("ev") == "mod", flags: i("flags"), category: i("cat"), appId: s("app"),
                 appName: s("appName"), title: s("title"), subtitle: s("sub"), message: s("msg"), date: s("date"),
-                positiveLabel: s("pos"), negativeLabel: s("neg")))
+                positiveLabel: s("pos"), negativeLabel: s("neg"), peer: s("peer")))
         case "bonds":
             let list = obj["list"] as? [[String: Any]] ?? []
             return .bonds(list.compactMap { b in
@@ -140,7 +143,7 @@ public enum Esp32LinkParser {
             })
         case "removed":
             guard let uid = u("uid") else { return nil }
-            return .removed(uid: uid)
+            return .removed(uid: uid, peer: s("peer"))
         case "acted":
             guard let uid = u("uid") else { return nil }
             return .acted(uid: uid, action: i("action"))

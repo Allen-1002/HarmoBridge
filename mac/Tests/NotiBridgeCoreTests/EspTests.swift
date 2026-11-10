@@ -270,8 +270,9 @@ final class EspTests: XCTestCase {
     }
 
     func testParseNotification() throws {
-        let line = #"@{"t":"notif","ev":"add","uid":4294967295,"flags":4,"cat":4,"app":"com.tencent.xin","appName":"微信","title":"张三","sub":"","msg":"晚上吃饭？\n\"好\"","date":"20261110T094500","pos":"","neg":"清除"}"#
+        let line = #"@{"t":"notif","ev":"add","uid":4294967295,"flags":4,"cat":4,"app":"com.tencent.xin","appName":"微信","title":"张三","sub":"","msg":"晚上吃饭？\n\"好\"","date":"20261110T094500","pos":"","neg":"清除","peer":"51:a8:27:cd:73:e0"}"#
         guard case let .notification(n)? = Esp32LinkParser.parse(line: line) else { return XCTFail() }
+        XCTAssertEqual(n.peer, "51:a8:27:cd:73:e0")
         XCTAssertEqual(n.uid, 4_294_967_295)
         XCTAssertTrue(n.preExisting)
         XCTAssertFalse(n.modified)
@@ -300,7 +301,9 @@ final class EspTests: XCTestCase {
     }
 
     func testParseOtherEventsAndLines() {
-        XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"removed","uid":9}"#), .removed(uid: 9))
+        XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"removed","uid":9}"#), .removed(uid: 9, peer: ""))
+        XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"removed","uid":9,"peer":"51:a8:27:cd:73:e0"}"#),
+                       .removed(uid: 9, peer: "51:a8:27:cd:73:e0"))
         XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"acted","uid":9,"action":1}"#), .acted(uid: 9, action: 1))
         XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"err","code":"auth","msg":"x"}"#),
                        .error(code: "auth", message: "x"))

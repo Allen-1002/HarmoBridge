@@ -15,7 +15,8 @@ public abstract record Esp32Event
         public override int GetHashCode() => List.Count;
     }
     public sealed record Notification(IphoneNotification Item) : Esp32Event;
-    public sealed record Removed(uint Uid) : Esp32Event;
+    /// <summary>Peer：发来的 iPhone 地址（固件 1.2.3 起；旧固件为空）</summary>
+    public sealed record Removed(uint Uid, string Peer = "") : Esp32Event;
     public sealed record Acted(uint Uid, int Action) : Esp32Event;
     public sealed record Error(string Code, string Message) : Esp32Event;
 }
@@ -40,7 +41,7 @@ public sealed record PairedIphone(string Id, string Name, bool Connected, bool A
 }
 
 public sealed record IphoneNotification(uint Uid, bool Modified, int Flags, int Category, string AppId, string AppName,
-    string Title, string Subtitle, string Message, string Date, string PositiveLabel, string NegativeLabel)
+    string Title, string Subtitle, string Message, string Date, string PositiveLabel, string NegativeLabel, string Peer = "")
 {
     public const int FlagSilent = 1, FlagImportant = 2, FlagPreExisting = 4;
 
@@ -88,14 +89,14 @@ public static class Esp32LinkParser
                     o.TryGetProperty("pairing", out var p) && p.ValueKind == JsonValueKind.True)),
                 "notif" => U("uid") is uint uid
                     ? new Esp32Event.Notification(new IphoneNotification(uid, S("ev") == "mod", I("flags"), I("cat"), S("app"),
-                        S("appName"), S("title"), S("sub"), S("msg"), S("date"), S("pos"), S("neg")))
+                        S("appName"), S("title"), S("sub"), S("msg"), S("date"), S("pos"), S("neg"), S("peer")))
                     : null,
                 "bonds" => new Esp32Event.Bonds(o.TryGetProperty("list", out var l) && l.ValueKind == JsonValueKind.Array
                     ? l.EnumerateArray().Where(b => b.ValueKind == JsonValueKind.Object)
                         .Select(b => new PairedIphone(Str(b, "addr"), Str(b, "name"), Bool(b, "connected"), Bool(b, "ready")))
                         .Where(b => b.Id.Length > 0).ToList()
                     : []),
-                "removed" => U("uid") is uint r ? new Esp32Event.Removed(r) : null,
+                "removed" => U("uid") is uint r ? new Esp32Event.Removed(r, S("peer")) : null,
                 "acted" => U("uid") is uint a ? new Esp32Event.Acted(a, I("action")) : null,
                 "err" => new Esp32Event.Error(S("code"), S("msg")),
                 _ => null,

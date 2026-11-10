@@ -280,11 +280,14 @@ static void emit_notification(const ancs_notif_attrs_t *a, const char *app_name)
     json_escape(a->pos_label, e_pos, sizeof e_pos);
     json_escape(a->neg_label, e_neg, sizeof e_neg);
     json_escape(a->date, e_date, sizeof e_date);
+    char peer[18];
+    fmt_bda(g_peer, peer);
+    // peer：发来通知的 iPhone（与 bonds 事件里的 addr 相同）
     serial_eventf("{\"t\":\"notif\",\"ev\":\"%s\",\"uid\":%" PRIu32 ",\"flags\":%u,\"cat\":%u,\"app\":\"%s\","
                   "\"appName\":\"%s\",\"title\":\"%s\",\"sub\":\"%s\",\"msg\":\"%s\",\"date\":\"%s\","
-                  "\"pos\":\"%s\",\"neg\":\"%s\"}",
+                  "\"pos\":\"%s\",\"neg\":\"%s\",\"peer\":\"%s\"}",
                   g_cur_req.ev == ANCS_EVT_MODIFIED ? "mod" : "add", a->uid, g_cur_req.flags, g_cur_req.cat, e_app,
-                  e_name, e_title, e_sub, e_msg, e_date, e_pos, e_neg);
+                  e_name, e_title, e_sub, e_msg, e_date, e_pos, e_neg, peer);
 }
 
 static void on_data_source(const uint8_t *data, size_t len) {
@@ -327,7 +330,9 @@ static void on_notification_source(const uint8_t *data, size_t len) {
     if (!ancs_parse_ns(data, len, &e)) return;
     if (e.event_id == ANCS_EVT_REMOVED) {
         dequeue_uid(e.uid);
-        serial_eventf("{\"t\":\"removed\",\"uid\":%" PRIu32 "}", e.uid);
+        char peer[18];
+        fmt_bda(g_peer, peer);
+        serial_eventf("{\"t\":\"removed\",\"uid\":%" PRIu32 ",\"peer\":\"%s\"}", e.uid, peer);
         return;
     }
     req_t r = {.type = REQ_GET, .uid = e.uid, .ev = e.event_id, .flags = e.flags, .cat = e.category};

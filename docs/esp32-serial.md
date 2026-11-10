@@ -27,15 +27,16 @@
 
 ```text
 @{"t":"state","ble":"advertising","peer":"","bonds":1,"pairing":false}
-@{"t":"notif","ev":"add","uid":12,"flags":0,"cat":4,"app":"com.tencent.xin","appName":"微信","title":"张三","sub":"","msg":"晚上吃饭？","date":"20261110T094500","pos":"","neg":"清除"}
+@{"t":"notif","ev":"add","uid":12,"flags":0,"cat":4,"app":"com.tencent.xin","appName":"微信","title":"张三","sub":"","msg":"晚上吃饭？","date":"20261110T094500","pos":"","neg":"清除","peer":"51:a8:27:cd:73:e0"}
 @{"t":"bonds","list":[{"addr":"51:a8:27:cd:73:e0","name":"Allen 的 iPhone","connected":true,"ready":true}]}
-@{"t":"removed","uid":12}
+@{"t":"removed","uid":12,"peer":"51:a8:27:cd:73:e0"}
 @{"t":"acted","uid":12,"action":1}
 @{"t":"err","code":"pairing_closed","msg":"有新 iPhone 请求配对，但配对窗口未打开"}
 ```
 
 - `ble`：`idle` / `advertising`（等待 iPhone）/ `connected` / `encrypted` / `ready`（已订阅 ANCS，可以收通知）。
 - `bonds`：所有配对过的 iPhone。`name` 是 iPhone 自己的设备名（连上后读取 GAP 设备名并存在 ESP32 上，第一次连上之前为空），`ready` 表示这台正连着且已订阅通知。连接、断开、配对、删除、读到名字时自动输出。
+- `notif.peer` / `removed.peer`：发来通知的 iPhone 地址，对应 `bonds` 里的 `addr`（固件 1.2.3 起），电脑端据此显示 iPhone 的名字。
 - `notif.flags`：ANCS EventFlags。1 静默、2 重要、4 已存在（连接时补发的旧通知，电脑不弹出）、8 有正向操作、16 有负向操作。
 - `notif.cat`：ANCS CategoryID。1 来电、2 未接来电、3 语音留言、4 社交、5 日程、6 邮件、7 新闻、8 健康、9 商务、10 位置、11 娱乐、0 其他。
 - `date`：iPhone 本地时间 `yyyyMMdd'T'HHmmSS`。

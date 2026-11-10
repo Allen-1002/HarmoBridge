@@ -587,10 +587,16 @@ public sealed class AppModel : ObservableObject
 
     private DeviceItem? Device(string id) => Devices.FirstOrDefault(d => d.Id == id);
     private string DeviceName(string id) =>
-        id == IphoneDeviceId ? "iPhone" : Device(id)?.Name ?? id[..Math.Min(8, id.Length)];
+        id.StartsWith(IphoneDeviceId, StringComparison.Ordinal)
+            // 经 ESP32 的 iPhone：用 ESP32 读到的 iPhone 名字
+            ? Esp32.Iphones.FirstOrDefault(p => id == IphoneSource(p.Id))?.DisplayName ?? "iPhone"
+            : Device(id)?.Name ?? id[..Math.Min(8, id.Length)];
 
     /// <summary>同时有局域网手机和经 ESP32 的 iPhone 时标出来源</summary>
-    private bool MultipleSources => Devices.Count + (Esp32.UseEsp32 ? 1 : 0) > 1;
+    private bool MultipleSources => Devices.Count + (Esp32.UseEsp32 ? Math.Max(1, Esp32.Iphones.Count) : 0) > 1;
+
+    /// <summary>经 ESP32 的 iPhone 的来源 id："iphone:&lt;蓝牙地址&gt;"（旧固件没有地址时为 "iphone"）</summary>
+    private static string IphoneSource(string peer) => peer.Length == 0 ? IphoneDeviceId : $"{IphoneDeviceId}:{peer}";
 
     // ---------------- 经 ESP32 收到的 iPhone 通知（ANCS） ----------------
 
@@ -613,16 +619,17 @@ public sealed class AppModel : ObservableObject
                         if (BlockSensitive && OtpExtractor.IsFinance(m.BundleName, m.Title, m.Text))
                             Log($"已跳过银行/支付类验证码（{m.AppName}）");
                         else
-                            HandleOtp(new OtpCode(m.Id, m.BundleName, m.AppName, code), IphoneDeviceId);
+                            HandleOtp(new OtpCode(m.Id, m.BundleName, m.AppName, code), IphoneSource(n.Peer));
                         return;
                     }
                 }
-                PresentFrom(m, IphoneDeviceId);
+                PresentFrom(m, IphoneSource(n.Peer));
                 break;
             case Esp32Event.Removed r:
                 var id = $"ios-{r.Uid}";
-                _notifier.Remove(IphoneDeviceId, [id]);
-                _deduper.Remove(IphoneDeviceId + "|" + id);
+                var src = IphoneSource(r.Peer);
+                _notifier.Remove(src, [id]);
+                _deduper.Remove(src + "|" + id);
                 break;
             case Esp32Event.State s when s.Link.Ble != _lastIphoneBle:
                 if (s.Link.Ready) Log("iPhone 已通过 ESP32 连接");
