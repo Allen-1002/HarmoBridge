@@ -126,7 +126,7 @@ struct OnboardingView: View {
 
     private var esp32Step: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("用支持数据传输的 USB 线把 ESP32 模块连接到这台 Mac，然后检测。ESP32 通话固件尚在开发中，目前可以先完成检测；也可以直接下一步，稍后在 设置 里完成。")
+            Text("用支持数据传输的 USB 线把 ESP32 模块连接到这台 Mac，然后检测。第一次使用先刷写固件，然后按提示在 iPhone 上配对。也可以直接下一步，稍后在 设置 里完成。")
                 .foregroundStyle(.secondary)
             Esp32Panel(esp: model.esp32)
         }

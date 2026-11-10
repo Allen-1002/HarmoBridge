@@ -110,14 +110,14 @@
                             <StackPanel>
                                 <RadioButton GroupName="UseMode" IsChecked="{Binding Esp32.UseEsp32}" FontWeight="SemiBold" Content="使用 ESP32" />
                                 <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13"
-                                           Text="在上面的基础上，还可以在电脑上接听、拨打电话。需要一块 ESP32 模块插在电脑 USB 上，由 NotiBridge 检测并刷写固件。" />
+                                           Text="需要一块 ESP32 模块插在电脑 USB 上，由 NotiBridge 刷写固件。iPhone 通过蓝牙把通知交给 ESP32，再转到电脑；以后还会支持在电脑上接打电话（开发中）。" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
                     <!-- ESP32 -->
                     <StackPanel x:Name="ObEsp" Visibility="Collapsed">
                         <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
-                                   Text="用支持数据传输的 USB 线把 ESP32 模块连接到这台电脑，然后检测。ESP32 通话固件尚在开发中，目前可以先完成检测；也可以直接下一步，稍后在 设置 里完成。" />
+                                   Text="用支持数据传输的 USB 线把 ESP32 模块连接到这台电脑，然后检测。第一次使用先刷写固件，然后按提示在 iPhone 上配对。也可以直接下一步，稍后在 设置 里完成。" />
                         <Border Style="{StaticResource Card}">
                             <local:Esp32Panel DataContext="{Binding Esp32}" />
                         </Border>
@@ -436,7 +436,7 @@
                             <StackPanel>
                                 <TextBlock Text="ESP32 通话模块" FontWeight="SemiBold" />
                                 <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseSoftware}" Content="纯软件：同步通知和验证码，不能接打电话" Margin="0,8,0,0" />
-                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseEsp32}" Content="使用 ESP32：额外支持在电脑上接打电话（固件开发中）" Margin="0,4,0,8" />
+                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseEsp32}" Content="使用 ESP32：接收 iPhone 通知（通话功能开发中）" Margin="0,4,0,8" />
                                 <local:Esp32Panel DataContext="{Binding Esp32}"
                                                   Visibility="{Binding Esp32.UseEsp32, Converter={StaticResource BoolToVis}}" />
                             </StackPanel>

@@ -110,6 +110,9 @@ final class AppModel: ObservableObject {
             self?.notifier.showLocal(title: "已更新到 \(v)", body: "NotiBridge 已自动更新并重新打开。")
         }
         updater.start()
+        esp32.onLog = { [weak self] s in self?.log(s) }
+        esp32.onEvent = { [weak self] e in self?.handleEsp32(e) }
+        esp32.startLinkIfPossible()
         loginItemEnabled = SMAppService.mainApp.status == .enabled
         // 首次使用由引导页统一申请权限；完成引导后启动时只确认通知权限
         if onboarded {
@@ -246,6 +249,7 @@ final class AppModel: ObservableObject {
     /// 手机显示名：自定义了名字就用自定义名字，否则用手机配对时报告的名字。
     func displayName(_ id: String) -> String {
         if let a = deviceAliases[id], !a.isEmpty { return a }
+        if id == Self.iphoneDeviceId { return "iPhone" }
         return pairedDevices.first { $0.id == id }?.name ?? String(id.prefix(8))
     }
 
@@ -263,7 +267,9 @@ final class AppModel: ObservableObject {
 
     /// 配对了多台手机时，通知里才标出来源手机
     func sourceLabel(_ deviceId: String) -> String? {
-        guard pairedDevices.count > 1, !deviceId.isEmpty else { return nil }
+        // 同时有局域网手机和经 ESP32 的 iPhone 时也标出来源
+        let sources = pairedDevices.count + (esp32.mode == .esp32 ? 1 : 0)
+        guard sources > 1, !deviceId.isEmpty else { return nil }
         return displayName(deviceId)
     }
 
@@ -563,6 +569,45 @@ final class AppModel: ObservableObject {
             keys.forEach(deduper.remove)
             log("手机撤销通知 \(ids.count) 条")
             server.ack(seq: seq, result: "removed", to: conn)
+        }
+    }
+
+    // MARK: - 经 ESP32 收到的 iPhone 通知（ANCS）
+
+    static let iphoneDeviceId = "iphone"
+    private var lastIphoneBle = ""
+
+    private func handleEsp32(_ e: Esp32Event) {
+        switch e {
+        case let .notification(n):
+            // 连接时 iPhone 会补发通知中心里已有的通知：不弹出
+            if n.preExisting { return }
+            let m = n.mirrored()
+            if !paused, !filter.blacklist.contains(m.bundleName), copyOtp {
+                let code = OtpExtractor.extract(title: m.title, text: m.text)
+                if !code.isEmpty {
+                    if filter.blockSensitive && OtpExtractor.isFinance(bundleName: m.bundleName, title: m.title, text: m.text) {
+                        log("已跳过银行/支付类验证码（\(m.appName)）")
+                    } else {
+                        _ = handleOtp(OtpCode(id: m.id, bundleName: m.bundleName, appName: m.appName, code: code),
+                                      from: Self.iphoneDeviceId)
+                    }
+                    return
+                }
+            }
+            _ = present(m, from: Self.iphoneDeviceId)
+        case let .removed(uid):
+            let key = scopedId(Self.iphoneDeviceId, "ios-\(uid)")
+            notifier.remove([key])
+            deduper.remove(key)
+        case let .state(s):
+            if s.ble != lastIphoneBle {
+                if s.ble == "ready" { log("iPhone 已通过 ESP32 连接") }
+                else if lastIphoneBle == "ready" { log("iPhone 已断开，ESP32 等待重新连接") }
+                lastIphoneBle = s.ble
+            }
+        default:
+            break
         }
     }
 

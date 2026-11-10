@@ -25,4 +25,11 @@ public partial class Esp32Panel : UserControl
 
     private void OnFlash(object sender, RoutedEventArgs e) => Esp?.Flash();
     private void OnSkip(object sender, RoutedEventArgs e) => Esp?.SkipFlash();
+    private void OnPair(object sender, RoutedEventArgs e) => Esp?.PairNewIphone();
+    private void OnForget(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("删除后 iPhone 需要重新配对，并在 iPhone 的蓝牙设置里“忽略此设备”。继续吗？", "删除 iPhone 配对",
+                MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK)
+            Esp?.ForgetIphones();
+    }
 }

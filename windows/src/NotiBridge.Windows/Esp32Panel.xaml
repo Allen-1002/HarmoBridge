@@ -4,23 +4,40 @@
     <!-- DataContext = Esp32Manager。引导页和设置页共用。 -->
     <StackPanel>
         <WrapPanel>
-            <Button x:Name="ScanButton" Content="检测已连接的 ESP32" Click="OnScan" Padding="16,8" Margin="0,0,10,8" />
+            <Button x:Name="ScanButton" Content="检测已连接的 ESP32" Click="OnScan" IsEnabled="{Binding NotBusy}" Padding="16,8" Margin="0,0,10,8" />
             <TextBlock Text="{Binding Message}" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="460" Margin="0,0,0,8"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
         </WrapPanel>
         <StackPanel Visibility="{Binding HasPorts, Converter={StaticResource BoolToVis}}">
-            <ComboBox ItemsSource="{Binding Ports}" SelectedItem="{Binding Selected}" MinWidth="320" HorizontalAlignment="Left" Margin="0,0,0,8" />
+            <ComboBox ItemsSource="{Binding Ports}" SelectedItem="{Binding Selected}" IsEnabled="{Binding NotBusy}" MinWidth="320" HorizontalAlignment="Left" Margin="0,0,0,8" />
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <Button Content="检测固件" Click="OnCheck" IsEnabled="{Binding NotBusy}" Margin="0,0,8,0" />
-                <Button Content="刷写固件" Click="OnFlash" IsEnabled="{Binding NotBusy}" />
+                <Button Content="刷写固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" />
             </StackPanel>
+            <ProgressBar Value="{Binding FlashProgress, Mode=OneWay}" Maximum="1" Height="6" MaxWidth="420" HorizontalAlignment="Stretch"
+                         Margin="0,0,0,6" Visibility="{Binding Flashing, Converter={StaticResource BoolToVis}}" />
             <TextBlock Text="{Binding FirmwareText}" TextWrapping="Wrap" FontWeight="SemiBold" />
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Visibility="{Binding NeedsFirmwareUpdate, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="{Binding UpdateFirmwareText}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <Button Content="更新固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" />
+            </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Visibility="{Binding FirmwareMissing, Converter={StaticResource BoolToVis}}">
-                <Button Content="重新刷写固件" Click="OnFlash" Margin="0,0,8,0" />
+                <Button Content="刷写固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" Margin="0,0,8,0" />
                 <Button Content="不刷写，稍后再说" Click="OnSkip" />
+            </StackPanel>
+            <!-- iPhone 连接 -->
+            <StackPanel Margin="0,12,0,0" Visibility="{Binding ShowIphone, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="{Binding LinkText}" FontWeight="SemiBold" />
+                <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Visibility="{Binding PairHintVisible, Converter={StaticResource BoolToVis}}"
+                           Text="在 iPhone 上打开「设置 › 蓝牙」，点 NotiBridge 并允许配对，然后在弹窗里允许“显示通知”。配对窗口约 3 分钟。" />
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <Button Content="配对新的 iPhone" Click="OnPair" Margin="0,0,8,0" />
+                    <Button Content="删除 iPhone 配对" Click="OnForget" Visibility="{Binding HasBonds, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
             </StackPanel>
         </StackPanel>
         <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Text="已经刷写过固件的模块，直接点“检测固件”即可；检测不通过时可以重新刷写或补齐固件，也可以先跳过。" />
+                   Text="第一次使用先点“刷写固件”（约 30 秒）。已经刷写过的模块直接点“检测固件”。" />
     </StackPanel>
 </UserControl>

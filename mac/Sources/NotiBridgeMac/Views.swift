@@ -815,7 +815,7 @@ struct SettingsView: View {
             } header: {
                 Text("ESP32 通话模块")
             } footer: {
-                Text(model.esp32.mode == .software ? UseMode.software.detail : "通话固件尚在开发中，目前只能检测硬件和固件。")
+                Text(model.esp32.mode == .software ? UseMode.software.detail : "ESP32 把 iPhone 的通知转到这台 Mac（蓝牙 ANCS）。通话功能还在开发中。")
             }
             Section("系统") {
                 Toggle("登录时自动启动", isOn: Binding(get: { model.loginItemEnabled }, set: { model.setLoginItem($0) }))

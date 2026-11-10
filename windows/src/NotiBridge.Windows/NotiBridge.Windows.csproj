@@ -37,5 +37,8 @@
   <ItemGroup>
     <Resource Include="Assets\AppIcon.png" />
     <EmbeddedResource Include="Assets\NotiBridge.ico" LogicalName="NotiBridge.ico" />
+    <!-- ESP32 固件（firmware/esp32/build_firmware.sh 生成） -->
+    <EmbeddedResource Include="..\..\..\firmware\esp32\prebuilt\notibridge-esp32.bin" LogicalName="notibridge-esp32.bin"
+                      Condition="Exists('..\..\..\firmware\esp32\prebuilt\notibridge-esp32.bin')" />
   </ItemGroup>
 </Project>

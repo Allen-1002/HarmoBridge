@@ -172,7 +172,7 @@ Windows 安装包没有 Authenticode 代码签名证书（未购买），Windows
 
 `kind` 以 `call.` 开头的消息保留给 ESP32 通话模块，通知模块忽略这些消息。
 
-## ESP32 通话模块（预留）
+## ESP32 模块
 
 电脑通过 USB 串口（115200 8N1）连接 ESP32。检测固件：电脑发送 `HB?\n`，NotiBridge 固件回复一行 `HB-ESP32 <版本> ...`，2 秒内收到即视为已刷写。
-固件尚未发布。
+完整的串口命令和事件见 [esp32-serial.md](esp32-serial.md)。目前固件把 iPhone 的通知（BLE ANCS）转给电脑；通话（HFP）在开发中。

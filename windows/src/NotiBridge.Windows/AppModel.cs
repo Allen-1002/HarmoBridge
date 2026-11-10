@@ -128,6 +128,8 @@ public sealed class AppModel : ObservableObject
         _settings = AppSettings.Load();
         Esp32 = new Esp32Manager(_settings);
         _notifier = new Notifier(Log);
+        Esp32.LogLine += Log;
+        Esp32.Event += HandleEsp32;
         Updater = new Updater(_settings, Log)
         {
             // 正在配对手机时不更新（更新会重启程序，打断配对）
@@ -149,6 +151,7 @@ public sealed class AppModel : ObservableObject
     public void Start(string? updatedTo = null)
     {
         _server.Start(_settings.Port);
+        Esp32.StartLinkIfPossible();
         Updater.Start(updatedTo);
         if (HasRepairNotice)
         {
@@ -569,7 +572,51 @@ public sealed class AppModel : ObservableObject
     }
 
     private DeviceItem? Device(string id) => Devices.FirstOrDefault(d => d.Id == id);
-    private string DeviceName(string id) => Device(id)?.Name ?? id[..Math.Min(8, id.Length)];
+    private string DeviceName(string id) =>
+        id == IphoneDeviceId ? "iPhone" : Device(id)?.Name ?? id[..Math.Min(8, id.Length)];
+
+    /// <summary>同时有局域网手机和经 ESP32 的 iPhone 时标出来源</summary>
+    private bool MultipleSources => Devices.Count + (Esp32.UseEsp32 ? 1 : 0) > 1;
+
+    // ---------------- 经 ESP32 收到的 iPhone 通知（ANCS） ----------------
+
+    private const string IphoneDeviceId = "iphone";
+    private string _lastIphoneBle = "";
+
+    private void HandleEsp32(Esp32Event e)
+    {
+        switch (e)
+        {
+            case Esp32Event.Notification { Item: var n }:
+                // 连接时 iPhone 会补发通知中心里已有的通知：不弹出
+                if (n.PreExisting) return;
+                var m = n.Mirrored();
+                if (!Paused && !_settings.Filter.Blacklist.Contains(m.BundleName) && CopyOtp)
+                {
+                    var code = OtpExtractor.Extract(m.Title, m.Text);
+                    if (code.Length > 0)
+                    {
+                        if (BlockSensitive && OtpExtractor.IsFinance(m.BundleName, m.Title, m.Text))
+                            Log($"已跳过银行/支付类验证码（{m.AppName}）");
+                        else
+                            HandleOtp(new OtpCode(m.Id, m.BundleName, m.AppName, code), IphoneDeviceId);
+                        return;
+                    }
+                }
+                PresentFrom(m, IphoneDeviceId);
+                break;
+            case Esp32Event.Removed r:
+                var id = $"ios-{r.Uid}";
+                _notifier.Remove(IphoneDeviceId, [id]);
+                _deduper.Remove(IphoneDeviceId + "|" + id);
+                break;
+            case Esp32Event.State s when s.Link.Ble != _lastIphoneBle:
+                if (s.Link.Ready) Log("iPhone 已通过 ESP32 连接");
+                else if (_lastIphoneBle == "ready") Log("iPhone 已断开，ESP32 等待重新连接");
+                _lastIphoneBle = s.Link.Ble;
+                break;
+        }
+    }
 
     // ---------------- 事件处理 ----------------
 
@@ -687,9 +734,11 @@ public sealed class AppModel : ObservableObject
         Raise(nameof(SubHeadline));
     }
 
-    private string Present(MirroredNotification n, Guid conn)
+    private string Present(MirroredNotification n, Guid conn) =>
+        PresentFrom(n, _connectionDevice.GetValueOrDefault(conn, ""));
+
+    private string PresentFrom(MirroredNotification n, string dev)
     {
-        var dev = _connectionDevice.GetValueOrDefault(conn, "");
         string result;
         if (Paused)
         {
@@ -709,7 +758,7 @@ public sealed class AppModel : ObservableObject
                     result = "duplicate";
                     break;
                 default:
-                    _notifier.Show(n, dev, DeviceName(dev), Devices.Count > 1);
+                    _notifier.Show(n, dev, DeviceName(dev), MultipleSources);
                     result = "shown";
                     break;
             }
@@ -742,7 +791,7 @@ public sealed class AppModel : ObservableObject
         Raise(nameof(LastOtpText));
         Raise(nameof(HasLastOtp));
         RaiseStats();
-        _notifier.ShowOtp(o.Code, o.AppName, Devices.Count > 1 && dev.Length > 0 ? DeviceName(dev) : null);
+        _notifier.ShowOtp(o.Code, o.AppName, MultipleSources && dev.Length > 0 ? DeviceName(dev) : null);
         Log($"验证码已复制到剪贴板（来自 {o.AppName}，{o.Code.Length} 位）");
         // 2 分钟后若剪贴板没被改过，就清除
         var t = new DispatcherTimer { Interval = TimeSpan.FromMinutes(2) };
