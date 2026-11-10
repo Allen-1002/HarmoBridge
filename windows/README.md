@@ -1,7 +1,7 @@
 # NotiBridge for Windows
 
-把手机通知同步到 Windows 电脑，功能与 Mac 版一致，和 Mac 版使用**同一套局域网加密协议**（[docs/protocol.md](../docs/protocol.md)）。
-手机端还是同一个 NotiBridge App：一台手机可以同时连接多台电脑（Mac、Windows 混用都可以），一台电脑也可以配对多台手机。
+Windows 客户端，功能与 Mac 版一致，使用相同的局域网加密协议（[docs/protocol.md](../docs/protocol.md)）。
+手机端使用同一个 NotiBridge App；一台手机可同时连接多台电脑（Mac 与 Windows 可混用），一台电脑也可配对多台手机。
 
 ## 功能
 
@@ -12,6 +12,8 @@
 - 局域网自动发现（系统自带 DNS-SD 广播 `_notibridge._tcp`），找不到时手机上可手动输入 IP
 - 白名单 / 黑名单 / 敏感关键词过滤；“暂停同步”“敏感过滤”“验证码复制”三个开关与所有在线手机双向同步
 - 首次启动引导、开机启动（当前用户 Run 注册表项，不需要管理员权限）
+- ESP32 模块：内置固件刷写（下载并校验签名，首次刷写前自动备份原固件，可一键还原），iPhone 通知（ANCS）
+- 通话：经 ESP32 接打手机电话，置顶通话小窗，声音使用默认的“通信”播放和录音设备；导入 `.vcf` 或 CSV 联系人用于来电显示和拨号；通话期间暂停弹出通知
 
 系统要求：Windows 10 1809 或更新（推荐 Windows 11），x64。
 
@@ -43,9 +45,10 @@ cd windows && dotnet test tests/NotiBridge.Core.Tests
    在开始菜单和桌面创建快捷方式，并出现在“设置 > 应用 > 已安装的应用”里（不需要管理员权限）。
    之后下载的压缩包可以删掉。选“否”就直接从当前位置运行，以后可以在“设置 > 关于”里再安装。
    运行新版本 exe 时会提示更新已安装的版本。加 `--portable` 参数运行则不提示安装。
-2. Windows 防火墙弹窗时勾选**专用网络**并允许。当前 Wi-Fi 被设为“公用网络”时手机连不上，需要在 设置 > 网络和 Internet 里改为“专用”。
+2. Windows 防火墙弹窗时勾选“专用网络”并允许。当前 Wi-Fi 被设为“公用网络”时手机连不上，需要在 设置 > 网络和 Internet 里改为“专用”。
 3. 按引导发送一条测试通知，确认右下角能弹出（专注助手 / 勿扰模式会拦截通知）。
 4. 手机 NotiBridge →“电脑连接”→“添加电脑”，选择这台电脑，输入电脑上显示的配对码，核对校验码。
+5. 使用 ESP32 时：插上板子后在“ESP32 模块”页刷写固件。设备管理器中没有出现对应的 COM 口时，程序会提示安装 USB 串口芯片（如 CH340）的驱动。
 
 鸿蒙手机还需要一步（安卓手机不需要）：鸿蒙系统要求“读取通知”必须绑定一台已配对的蓝牙设备。手机已经绑定过其他电脑（比如 Mac）的话不用再配对蓝牙；
 否则可以在 Windows“设置 > 蓝牙和其他设备”里和手机配对，再在手机 App 里选择这台电脑。通知本身走局域网，平时不需要蓝牙连接。
@@ -57,6 +60,9 @@ cd windows && dotnet test tests/NotiBridge.Core.Tests
 | 设置 | `%APPDATA%\NotiBridge\settings.json` |
 | 已配对手机（密钥经 DPAPI 加密） | `%APPDATA%\NotiBridge\paired.json` |
 | 应用图标缓存、错误日志 | `%LOCALAPPDATA%\NotiBridge\` |
+| 导入的联系人（DPAPI 加密） | `%LOCALAPPDATA%\NotiBridge\contacts.bin` |
+| 下载的 ESP32 固件缓存 | `%LOCALAPPDATA%\NotiBridge\esp32-firmware\` |
+| ESP32 原固件备份（清除数据时保留） | `%LOCALAPPDATA%\NotiBridge ESP32 Backups\` |
 
 通知内容只保存在内存里，不写磁盘；日志不记录通知标题和正文。
 
@@ -64,7 +70,7 @@ cd windows && dotnet test tests/NotiBridge.Core.Tests
 
 “设置 > 软件更新”：默认开启“自动检查更新”和“自动下载并安装”。程序启动 30 秒后检查一次 GitHub Releases，之后每 6 小时检查一次。
 
-1. 下载 `NotiBridge-<版本>-Windows-x64.zip` 和同一个 Release 的 `SHA256SUMS.txt` 到 `%LOCALAPPDATA%\NotiBridge\update\`，核对 SHA256（不一致则放弃并删除）
+1. 下载 `NotiBridge-<版本>-Windows-x64.zip`、同一个 Release 的 `SHA256SUMS.txt` 和 `SHA256SUMS.txt.sig` 到 `%LOCALAPPDATA%\NotiBridge\update\`，验证 Ed25519 签名并核对 SHA256（任一不通过则放弃并删除）
 2. 解压出 `NotiBridge.exe`，核对文件版本号和产品名
 3. 运行新 exe：`NotiBridge.exe --apply-update <旧进程 PID> <当前 exe 路径>`，旧程序退出；新 exe 等旧进程结束后把自己复制过去（安装版走安装逻辑，同时更新“已安装的应用”里的版本号；免安装版直接覆盖原 exe），再以 `--background --updated <版本>` 启动，弹出“已更新到 x.y.z”通知
 4. 下次启动 30 秒后清理 `update` 目录；替换过程日志在 `%LOCALAPPDATA%\NotiBridge\update-apply.log`
@@ -98,7 +104,10 @@ windows/
 │   ├── Messages.cs              # 协议帧
 │   ├── SessionMachine.cs        # 每个连接的配对/认证/防重放状态机，对应 SessionMachine.swift
 │   ├── SyncPolicy.cs            # 过滤与去重
-│   └── BridgeServer.cs          # WebSocket 服务端（TcpListener，不需要管理员权限），多连接
-├── src/NotiBridge.Windows/     # WPF 界面（Fluent 主题）、托盘、Toast 通知、DPAPI、DNS-SD、开机启动
+│   ├── BridgeServer.cs          # WebSocket 服务端（TcpListener，不需要管理员权限），多连接
+│   ├── EspRom.cs / EspBackup.cs # ESP32 ROM 下载协议、原固件备份与还原
+│   ├── Esp32Link.cs / AudioLink.cs  # ESP32 串口事件、音频帧、抖动缓冲、联系人导入
+│   └── FirmwareFeed.cs          # 从 GitHub 获取并校验 ESP32 固件
+├── src/NotiBridge.Windows/     # WPF 界面（Fluent 主题）、托盘、Toast 通知、DPAPI、DNS-SD、开机启动、ESP32、通话
 └── tests/NotiBridge.Core.Tests # xUnit
 ```
