@@ -341,7 +341,7 @@ public partial class MainWindow : Window
         {
             if (_phones == "iphone") StartAddFlow(AddKind.Iphone);
             else if (_phones == "android") StartAddFlow(AddKind.Phone);
-            else ResetAddDevice(); // 两种都有：先选设备类型
+            else ResetAddDevice(); // iPhone + 安卓 / 鸿蒙：先选设备类型
         }
         else ResetAddDevice();
     }

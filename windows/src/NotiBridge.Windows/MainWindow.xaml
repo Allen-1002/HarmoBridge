@@ -116,7 +116,7 @@
                         </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <RadioButton x:Name="PhonesBoth" GroupName="Phones" FontWeight="SemiBold" Content="两种都有" Checked="OnPhonesChanged" />
+                                <RadioButton x:Name="PhonesBoth" GroupName="Phones" FontWeight="SemiBold" Content="iPhone + 安卓 / 鸿蒙" Checked="OnPhonesChanged" />
                                 <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13" TextWrapping="Wrap"
                                            Text="安卓 / 鸿蒙手机走局域网，iPhone 走 ESP32 模块，两边的通知都会同步到这台电脑。" />
                             </StackPanel>

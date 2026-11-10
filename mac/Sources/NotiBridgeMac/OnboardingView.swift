@@ -134,7 +134,7 @@ struct OnboardingView: View {
             KindOption(icon: "iphone", color: .blue, title: "安卓 / 鸿蒙手机",
                        detail: "在手机上安装 NotiBridge App，同一 Wi-Fi 下同步通知，不需要额外硬件。",
                        selected: phones == .android) { choosePhones(.android) }
-            KindOption(icon: "iphone.and.arrow.forward", color: .green, title: "两种都有",
+            KindOption(icon: "iphone.and.arrow.forward", color: .green, title: "iPhone + 安卓 / 鸿蒙",
                        detail: "安卓 / 鸿蒙手机走局域网，iPhone 走 ESP32 模块，两边的通知都会同步到这台 Mac。",
                        selected: phones == .both) { choosePhones(.both) }
         }
