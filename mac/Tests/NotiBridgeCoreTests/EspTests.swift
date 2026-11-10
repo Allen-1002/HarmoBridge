@@ -1,3 +1,4 @@
+import AVFoundation
 import CryptoKit
 import Foundation
 @testable import NotiBridgeCore
@@ -558,5 +559,77 @@ final class RealBoardStressTests: XCTestCase {
         print("波特率 \(baud)：发送 \(seq) 帧，未知命令 \(unknown) 次，握手回复 \(hello) 次")
         port.close()
         XCTAssertEqual(unknown, 0)
+    }
+
+    /// 和 App 一样：读写分在两个线程
+    func testTwoThreads() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["HB_ESP_PORT"], let secs = Double(env["HB_ESP_STRESS2"] ?? "") else { throw XCTSkip("未设置") }
+        let port = try PosixSerialPort(path: path)
+        try port.setDTR(false); try port.setRTS(false)
+        sleep(4)
+        port.flushInput()
+        try port.write(Array("\nBAUD 1000000\n".utf8))
+        var d0 = SerialDemux(), acked = false
+        let t0 = Date()
+        while Date().timeIntervalSince(t0) < 1.5 && !acked {
+            for item in d0.feed(try port.read(timeout: 0.1)) { if case let .line(l) = item, l.contains("baud") { acked = true } }
+        }
+        XCTAssertTrue(acked)
+        usleep(20_000)
+        try port.setBaud(1_000_000)
+        let lock = NSLock()
+        var stop = false
+        var sent = 0
+        var maxWrite = 0.0
+        let writer = Thread {
+            var seq: UInt16 = 0
+            var next = Date()
+            while !stop {
+                seq &+= 1
+                let t = Date()
+                lock.lock()
+                try? port.write(SerialDemux.encode(type: .audioUp, seq: seq, data: [UInt8](repeating: 0x13, count: 240)))
+                lock.unlock()
+                maxWrite = max(maxWrite, Date().timeIntervalSince(t))
+                sent += 1
+                next = next.addingTimeInterval(0.0075)
+                let d = next.timeIntervalSinceNow
+                if d > 0 { Thread.sleep(forTimeInterval: d) }
+            }
+        }
+        writer.start()
+        // 可选：同时打开麦克风采集（和 App 通话时一样），看是否影响串口
+        var engine: AVAudioEngine?
+        if env["HB_ESP_MIC"] != nil {
+            let e = AVAudioEngine()
+            let input = e.inputNode
+            let f = input.outputFormat(forBus: 0)
+            print("麦克风格式 \(f)")
+            input.installTap(onBus: 0, bufferSize: 4800, format: f) { _, _ in }
+            try e.start()
+            engine = e
+        }
+        var demux = SerialDemux()
+        var unknown = 0, pongs = 0
+        var lastPing = Date()
+        let end = Date().addingTimeInterval(secs)
+        while Date() < end {
+            for item in demux.feed(try port.read(timeout: 0.2)) {
+                if case let .line(l) = item {
+                    if l.contains("unknown_cmd") { unknown += 1 }
+                    if l.contains("pong") { pongs += 1 }
+                }
+            }
+            if Date().timeIntervalSince(lastPing) > 1 {
+                lock.lock(); try port.write(Array("PING\n".utf8)); lock.unlock()
+                lastPing = Date()
+            }
+        }
+        stop = true
+        engine?.stop()
+        Thread.sleep(forTimeInterval: 0.1)
+        print("两线程：发送 \(sent) 帧，最长一次写入 \(String(format: "%.1f", maxWrite * 1000)) ms，未知命令 \(unknown)，pong \(pongs)")
+        port.close()
     }
 }

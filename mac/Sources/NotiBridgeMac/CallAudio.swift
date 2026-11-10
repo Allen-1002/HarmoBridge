@@ -45,14 +45,19 @@ final class CallAudio {
     }
 
     private var sourceNode: AVAudioSourceNode?
+    /// 播放用的引擎：开回声消除时和采集共用一个；不开时单独一个。
+    /// macOS 上麦克风和扬声器是不同设备时（例如 USB 声卡的麦克风 + Mac 扬声器），一个引擎只会跟着输入设备走，播放没声音。
+    private var player: AVAudioEngine?
 
     private func stopEngine() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        if let p = player, p !== engine { p.stop() }
         if let n = sourceNode {
-            engine.detach(n)
+            (player ?? engine).detach(n)
             sourceNode = nil
         }
+        player = nil
         engine.reset()
     }
 
@@ -74,8 +79,14 @@ final class CallAudio {
             return noErr
         }
         sourceNode = source
-        engine.attach(source)
-        engine.connect(source, to: engine.mainMixerNode, format: format)
+        let out = voiceProcessing ? engine : AVAudioEngine()
+        player = out
+        out.attach(source)
+        out.connect(source, to: out.mainMixerNode, format: format)
+        if out !== engine {
+            out.prepare()
+            try out.start()
+        }
 
         // 上行采集：转成 sampleRate 单声道，凑够 7.5 ms 发一帧
         let inFormat = input.outputFormat(forBus: 0)
