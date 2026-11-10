@@ -89,6 +89,8 @@ static void rx_task(void *arg) {
     for (;;) {
         int n = uart_read_bytes(LINK_UART, ch, sizeof ch, pdMS_TO_TICKS(100));
         if (n > 0) last_rx_us = esp_timer_get_time();
+        // 100 ms 没有数据：丢掉没收完的半个帧（电脑端中途断开时不会把后面的命令吃掉）
+        if (n <= 0 && fstate != 0) fstate = 0;
         for (int i = 0; i < n; i++) {
             uint8_t b = ch[i];
             if (fstate == 1) {

@@ -751,6 +751,31 @@ final class AppModel: ObservableObject {
         logs.insert(LogLine(at: Date(), text: text), at: 0)
         if logs.count > 300 { logs.removeLast(logs.count - 300) }
         NSLog("NotiBridge: \(text)")
+        Self.appendLogFile(text)
+    }
+
+    /// 日志也写一份到 ~/Library/Logs/NotiBridge/notibridge.log（排查问题用，超过 1 MB 换新文件）
+    private static let logFile: URL = {
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/NotiBridge", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("notibridge.log")
+    }()
+
+    private static func appendLogFile(_ text: String) {
+        let f = logFile
+        if let size = (try? FileManager.default.attributesOfItem(atPath: f.path)[.size]) as? Int, size > 1_000_000 {
+            try? FileManager.default.removeItem(at: f.deletingPathExtension().appendingPathExtension("old.log"))
+            try? FileManager.default.moveItem(at: f, to: f.deletingPathExtension().appendingPathExtension("old.log"))
+        }
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(text)\n"
+        if let h = try? FileHandle(forWritingTo: f) {
+            h.seekToEndOfFile()
+            h.write(Data(line.utf8))
+            try? h.close()
+        } else {
+            try? Data(line.utf8).write(to: f)
+        }
     }
 
     private func saveFilter() {

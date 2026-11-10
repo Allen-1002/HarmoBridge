@@ -502,7 +502,7 @@ final class Esp32Manager: ObservableObject {
                                 let v = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
                                 if !askedHigh && !highBaudFailed && baud == 115_200 && (UpdateCore.compareVersions(v, "1.3.0") ?? -1) >= 0 {
                                     askedHigh = true
-                                    try write(port, Array("BAUD 2000000\n".utf8))
+                                    try write(port, Array("BAUD 921600\n".utf8))
                                 }
                             }
                             if line.hasPrefix("@{\"t\":\"baud\""), let r = line.range(of: "\"value\":") {
@@ -510,6 +510,7 @@ final class Esp32Manager: ObservableObject {
                                 usleep(20_000)
                                 try port.setBaud(v)
                                 baud = v
+                                DispatchQueue.main.async { MainActor.assumeIsolated { self.onLog?("ESP32 串口提速到 \(v)") } }
                                 try write(port, Array("HB?\n".utf8))
                                 lastWrite = Date()
                                 verifyDeadline = Date().addingTimeInterval(1.5)
@@ -523,6 +524,7 @@ final class Esp32Manager: ObservableObject {
                     if let d = verifyDeadline, now > d {
                         verifyDeadline = nil
                         highBaudFailed = true
+                        DispatchQueue.main.async { MainActor.assumeIsolated { self.onLog?("ESP32 串口提速失败，退回 115200") } }
                         try port.setBaud(115_200)
                         baud = 115_200
                         sleep(4)
@@ -588,7 +590,10 @@ final class Esp32Manager: ObservableObject {
             cur.stop()
             callAudio = nil
         }
-        guard let sr = want else { return }
+        guard let sr = want else {
+            if hfp?.audio != "off" && hfp != nil { onLog?("通话声音：\(hfp?.audio ?? "")，在\(hfp?.audioToPC == true ? "电脑" : "手机")上") }
+            return
+        }
         let a = CallAudio(sampleRate: sr) { [weak self] pcm in self?.sendUp(pcm) }
         a.onLog = { [weak self] s in DispatchQueue.main.async { MainActor.assumeIsolated { self?.onLog?(s) } } }
         do {

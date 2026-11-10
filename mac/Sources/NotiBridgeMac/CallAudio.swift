@@ -26,7 +26,10 @@ final class CallAudio {
     }
 
     /// 收到 ESP32 的下行音频（串口线程）
+    private var received = 0, sent = 0
     func receive(_ bytes: [UInt8]) {
+        received += 1
+        if received == 1 || received % 1000 == 0 { onLog?("通话声音：已收到 \(received) 帧、已发送 \(sent) 帧") }
         jitter.push(PCM16.samples(bytes))
     }
 
@@ -87,6 +90,7 @@ final class CallAudio {
             let frame = Array(pendingUp.prefix(frameSamples))
             pendingUp.removeFirst(frameSamples)
             sendUp(PCM16.bytes(frame))
+            sent += 1
         }
     }
 

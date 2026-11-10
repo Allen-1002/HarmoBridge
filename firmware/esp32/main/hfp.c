@@ -227,8 +227,13 @@ void hfp_pairing_changed(void) {
 static RingbufHandle_t s_mic_rb;
 static uint16_t s_down_seq;
 static volatile bool s_streaming;
+// 诊断计数：每 2 秒在 audio_stats 事件里输出
+static volatile uint32_t st_in_calls, st_in_bytes, st_out_calls, st_out_bytes, st_up_frames, st_up_bytes;
+static int64_t st_last;
 
 static void audio_in(const uint8_t *buf, uint32_t len) {
+    st_in_calls++;
+    st_in_bytes += len;
     if (!s_streaming || len == 0) return;
     // 每个 SCO 包直接发给电脑（mSBC 解码后 240 字节 / 7.5 ms）
     while (len > 0) {
@@ -242,6 +247,7 @@ static void audio_in(const uint8_t *buf, uint32_t len) {
 }
 
 static uint32_t audio_out(uint8_t *buf, uint32_t len) {
+    st_out_calls++;
     if (!s_mic_rb) return 0;
     size_t got = 0;
     uint8_t *p = xRingbufferReceiveUpTo(s_mic_rb, &got, 0, len);
@@ -249,6 +255,7 @@ static uint32_t audio_out(uint8_t *buf, uint32_t len) {
     if (got == len) {
         memcpy(buf, p, len);
         vRingbufferReturnItem(s_mic_rb, p);
+        st_out_bytes += len;
         return len;
     }
     // 数据不够一个包：先拼上第二段（环形缓冲区回绕时会分两次取）
@@ -267,7 +274,10 @@ static uint32_t audio_out(uint8_t *buf, uint32_t len) {
 // 电脑发来的麦克风数据
 static void on_frame(uint8_t type, uint16_t seq, const uint8_t *data, uint16_t len) {
     (void)seq;
-    if (type != FRAME_AUDIO_UP || !s_streaming || !s_mic_rb) return;
+    if (type != FRAME_AUDIO_UP) return;
+    st_up_frames++;
+    st_up_bytes += len;
+    if (!s_streaming || !s_mic_rb) return;
     if (xRingbufferSend(s_mic_rb, data, len, 0) != pdTRUE) {
         // 满了（电脑发得比手机取得快）：丢掉最旧的一段再放
         size_t got = 0;
@@ -483,6 +493,14 @@ void hfp_tick(void) {
         }
     }
     update_scan_mode();
+    if (s_audio != ESP_HF_CLIENT_AUDIO_STATE_DISCONNECTED && now - st_last > 2000000) {
+        st_last = now;
+        serial_eventf("{\"t\":\"audio_stats\",\"inCalls\":%lu,\"inBytes\":%lu,\"outCalls\":%lu,\"outBytes\":%lu,"
+                      "\"upFrames\":%lu,\"upBytes\":%lu,\"streaming\":%s,\"baud\":%d}",
+                      (unsigned long)st_in_calls, (unsigned long)st_in_bytes, (unsigned long)st_out_calls,
+                      (unsigned long)st_out_bytes, (unsigned long)st_up_frames, (unsigned long)st_up_bytes,
+                      s_streaming ? "true" : "false", serial_get_baud());
+    }
     UNLOCK();
 }
 
