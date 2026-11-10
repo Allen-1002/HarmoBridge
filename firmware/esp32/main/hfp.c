@@ -36,6 +36,7 @@ static int64_t s_backoff = RECONNECT_MIN_US;
 static bool s_discoverable;
 static int s_battery = -1, s_signal = -1;
 static char s_operator[32];
+static int64_t s_grace_until; // 刚配对完的一小段时间里允许手机补做一次配对（iPhone 会连着做两次）
 
 static void fmt(const uint8_t *b, char *out) {
     sprintf(out, "%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]);
@@ -160,6 +161,7 @@ static void emit_phones(void) {
 }
 
 void hfp_emit_all(void) {
+    if (!s_lock) return;
     LOCK();
     emit_hfp();
     emit_call();
@@ -177,21 +179,91 @@ static void update_scan_mode(void) {
 }
 
 void hfp_pairing_changed(void) {
+    if (!s_lock) return;
     LOCK();
     update_scan_mode();
     UNLOCK();
 }
 
-// ---- 通话音频（第二阶段走电脑；现在留在手机上）----
-static void audio_in(const uint8_t *buf, uint32_t len) { (void)buf; (void)len; }
-static uint32_t audio_out(uint8_t *buf, uint32_t len) { (void)buf; (void)len; return 0; }
+// ---- 通话音频：手机 → ESP32 → 串口 → 电脑（扬声器），电脑麦克风 → 串口 → ESP32 → 手机 ----
+// 格式：16 位小端单声道 PCM；mSBC 为 16 kHz，CVSD 为 8 kHz（audio 事件里的 audio 字段说明是哪种）。
+#include "freertos/ringbuf.h"
+#define MIC_RB_SIZE 6400 // 16 kHz 下约 200 ms
+static RingbufHandle_t s_mic_rb;
+static uint16_t s_down_seq;
+static volatile bool s_streaming;
+
+static void audio_in(const uint8_t *buf, uint32_t len) {
+    if (!s_streaming || len == 0) return;
+    // 每个 SCO 包直接发给电脑（mSBC 解码后 240 字节 / 7.5 ms）
+    while (len > 0) {
+        uint16_t n = len > 960 ? 960 : (uint16_t)len;
+        serial_send_frame(FRAME_AUDIO_DOWN, s_down_seq++, buf, n);
+        buf += n;
+        len -= n;
+    }
+    // 有下行数据就说明链路在走，顺便通知协议栈去取上行（麦克风）数据
+    esp_hf_client_outgoing_data_ready();
+}
+
+static uint32_t audio_out(uint8_t *buf, uint32_t len) {
+    if (!s_mic_rb) return 0;
+    size_t got = 0;
+    uint8_t *p = xRingbufferReceiveUpTo(s_mic_rb, &got, 0, len);
+    if (!p) return 0;
+    if (got == len) {
+        memcpy(buf, p, len);
+        vRingbufferReturnItem(s_mic_rb, p);
+        return len;
+    }
+    // 数据不够一个包：先拼上第二段（环形缓冲区回绕时会分两次取）
+    memcpy(buf, p, got);
+    vRingbufferReturnItem(s_mic_rb, p);
+    size_t got2 = 0;
+    uint8_t *p2 = xRingbufferReceiveUpTo(s_mic_rb, &got2, 0, len - got);
+    if (p2) {
+        memcpy(buf + got, p2, got2);
+        vRingbufferReturnItem(s_mic_rb, p2);
+    }
+    if (got + got2 < len) memset(buf + got + got2, 0, len - got - got2);
+    return len;
+}
+
+// 电脑发来的麦克风数据
+static void on_frame(uint8_t type, uint16_t seq, const uint8_t *data, uint16_t len) {
+    (void)seq;
+    if (type != FRAME_AUDIO_UP || !s_streaming || !s_mic_rb) return;
+    if (xRingbufferSend(s_mic_rb, data, len, 0) != pdTRUE) {
+        // 满了（电脑发得比手机取得快）：丢掉最旧的一段再放
+        size_t got = 0;
+        uint8_t *old = xRingbufferReceiveUpTo(s_mic_rb, &got, 0, len);
+        if (old) vRingbufferReturnItem(s_mic_rb, old);
+        xRingbufferSend(s_mic_rb, data, len, 0);
+    }
+}
+
+static void audio_start(void) {
+    if (!s_mic_rb) s_mic_rb = xRingbufferCreate(MIC_RB_SIZE, RINGBUF_TYPE_BYTEBUF);
+    s_down_seq = 0;
+    s_streaming = true;
+}
+
+static void audio_stop(void) {
+    s_streaming = false;
+    if (s_mic_rb) {
+        size_t got;
+        void *p;
+        while ((p = xRingbufferReceiveUpTo(s_mic_rb, &got, 0, MIC_RB_SIZE)) != NULL) vRingbufferReturnItem(s_mic_rb, p);
+    }
+}
 
 // ---- GAP（经典蓝牙）----
 static void gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param) {
     LOCK();
     switch (event) {
     case ESP_BT_GAP_CFM_REQ_EVT: {
-        bool ok = s_pairing_open() || esp_bt_gap_get_bond_device_num() <= 0;
+        bool ok = s_pairing_open() || esp_bt_gap_get_bond_device_num() <= 0 || esp_timer_get_time() < s_grace_until ||
+                  is_bonded(param->cfm_req.bda);
         esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, ok);
         if (ok) {
             serial_eventf("{\"t\":\"pair_code\",\"code\":\"%06lu\"}", (unsigned long)param->cfm_req.num_val);
@@ -203,13 +275,21 @@ static void gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param) {
     case ESP_BT_GAP_PIN_REQ_EVT: {
         // 旧手机不支持 SSP：配对窗口打开时用 0000
         esp_bt_pin_code_t pin = {'0', '0', '0', '0'};
-        esp_bt_gap_pin_reply(param->pin_req.bda, s_pairing_open(), 4, pin);
+        bool ok = s_pairing_open() || esp_bt_gap_get_bond_device_num() <= 0 || esp_timer_get_time() < s_grace_until;
+        esp_bt_gap_pin_reply(param->pin_req.bda, ok, 4, pin);
         break;
     }
     case ESP_BT_GAP_AUTH_CMPL_EVT:
         if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
-            char key[13];
+            s_grace_until = esp_timer_get_time() + 60LL * 1000 * 1000;
+            char key[13], a[18];
             key_of(param->auth_cmpl.bda, key);
+            // 配对后主动连接免提（有的手机配对完不会自己连）
+            fmt(param->auth_cmpl.bda, a);
+            nv_set_str("last", a);
+            s_user_disconnected = false;
+            s_backoff = RECONNECT_MIN_US;
+            if (s_conn == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) s_next_reconnect = esp_timer_get_time() + 3000000;
             if (param->auth_cmpl.device_name[0]) nv_set_str(key, (const char *)param->auth_cmpl.device_name);
             emit_phones();
             update_scan_mode();
@@ -268,6 +348,9 @@ static void hf_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *para
             esp_hf_client_register_data_callback(audio_in, audio_out);
             // 声音留在手机上：手机把通话音频切给免提时立即断开音频连接
             if (!s_audio_to_pc) esp_hf_client_disconnect_audio(s_peer);
+            else audio_start();
+        } else {
+            audio_stop();
         }
         emit_hfp();
         break;
@@ -278,6 +361,8 @@ static void hf_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *para
         break;
     case ESP_HF_CLIENT_CIND_CALL_SETUP_EVT:
         s_setup = param->call_setup.status;
+        // 有的手机（例如 iPhone）不主动发 +CLIP：查一次当前通话拿号码
+        if (s_setup && !s_clip[0]) esp_hf_client_query_current_calls();
         if (!s_call && !s_setup) s_clip[0] = 0;
         emit_call();
         break;
@@ -333,6 +418,7 @@ static void hf_cb(esp_hf_client_cb_event_t event, esp_hf_client_cb_param_t *para
 }
 
 void hfp_tick(void) {
+    if (!s_lock) return;
     LOCK();
     int64_t now = esp_timer_get_time();
     if (s_conn == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED && !s_user_disconnected && s_next_reconnect > 0 &&
@@ -350,6 +436,7 @@ void hfp_tick(void) {
 }
 
 bool hfp_handle_command(const char *line) {
+    if (!s_lock) return false;
     bool handled = true;
     LOCK();
     if (strcmp(line, "ANSWER") == 0) {
@@ -428,9 +515,10 @@ void hfp_init(hfp_pairing_open_fn pairing_open) {
     // 设备类别：音频 / 免提（手机据此显示为耳机/车载类设备）
     esp_bt_cod_t cod = {.major = ESP_BT_COD_MAJOR_DEV_AV, .minor = 0x02, .service = ESP_BT_COD_SRVC_AUDIO | ESP_BT_COD_SRVC_TELEPHONY};
     esp_bt_gap_set_cod(cod, ESP_BT_SET_COD_ALL);
-    // SSP：显示数字并确认（配对码会发给电脑显示）
-    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_IO;
+    // SSP：无输入输出（Just Works），手机上只弹一次“配对”确认，和普通蓝牙耳机一样
+    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE;
     esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &iocap, sizeof iocap);
+    serial_set_frame_handler(on_frame);
     esp_hf_client_register_callback(hf_cb);
     esp_hf_client_init();
     s_discoverable = true; // 强制第一次设置

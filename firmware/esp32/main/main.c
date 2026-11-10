@@ -645,6 +645,7 @@ static void tick(void *arg) {
         if (g_encrypted) search_ancs();
     }
     UNLOCK();
+    if (serial_get_baud() != 115200 && serial_ms_since_rx() > 3000) serial_set_baud(115200);
     hfp_tick();
 }
 
@@ -761,6 +762,17 @@ static void handle_command(char *line) {
         unsigned long action = strtoul(end, NULL, 10);
         if (!g_ancs_ready) emit_error("not_ready", "iPhone 未连接");
         else enqueue((req_t){.type = REQ_ACTION, .uid = (uint32_t)uid, .action = action ? 1 : 0});
+    } else if (strncmp(line, "BAUD ", 5) == 0) {
+        // 通话时电脑把串口提速（音频需要约 70 KB/s）；电脑 3 秒没有数据就自动回到 115200
+        int b = atoi(line + 5);
+        if (b == 115200 || b == 921600 || b == 1500000 || b == 2000000) {
+            serial_eventf("{\"t\":\"baud\",\"value\":%d}", b);
+            serial_set_baud(b);
+        } else {
+            emit_error("bad_baud", "不支持的波特率");
+        }
+    } else if (strcmp(line, "PING") == 0) {
+        // 电脑在高波特率下的心跳
     } else if (strcmp(line, "REBOOT") == 0) {
         esp_restart();
     } else {
