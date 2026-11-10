@@ -106,8 +106,11 @@ struct Esp32Panel: View {
             if let s = esp.link {
                 Label(s.label, systemImage: s.ble == "ready" ? "iphone.radiowaves.left.and.right" : "iphone")
                     .foregroundStyle(s.ble == "ready" ? .green : .secondary)
+                if !esp.iphoneProblem.isEmpty && s.ble != "ready" {
+                    Text(esp.iphoneProblem).font(.caption).foregroundStyle(.orange)
+                }
                 if s.bonds == 0 || s.pairing {
-                    Text("在 iPhone 上打开「设置 › 蓝牙」，点 NotiBridge 并允许配对，然后在弹窗里允许“显示通知”。配对窗口约 3 分钟。")
+                    Text("在 iPhone 上打开「设置 › 蓝牙」，点 NotiBridge 并允许配对，然后在弹窗里允许共享通知（或在 NotiBridge 右边的 ⓘ 里打开“共享系统通知”）。配对窗口约 3 分钟。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {

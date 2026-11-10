@@ -61,6 +61,8 @@ static SemaphoreHandle_t g_lock;
 
 static esp_gatt_if_t g_gattc_if = ESP_GATT_IF_NONE;
 static bool g_connected, g_encrypted, g_ancs_ready, g_advertising;
+static bool g_gattc_open; // GATT 客户端虚拟连接已建立（外设角色也要 open 才能当客户端用）
+static esp_ble_addr_type_t g_peer_addr_type;
 static uint16_t g_conn_id;
 static esp_bd_addr_t g_peer;
 static int64_t g_connected_at;
@@ -132,6 +134,20 @@ static void emit_error(const char *code, const char *msg) {
     serial_eventf("{\"t\":\"err\",\"code\":\"%s\",\"msg\":\"%s\"}", code, msg);
 }
 
+static void emit_step(const char *msg) { serial_eventf("{\"t\":\"step\",\"msg\":\"%s\"}", msg); }
+
+// ANCS 设置失败（iPhone 还没允许共享通知、服务暂时没出现等）时，每 4 秒从发现服务重新开始，最多 2 分钟
+#define SETUP_RETRY_MAX 30
+static void schedule_retry(const char *code, const char *msg) {
+    if (g_search_retries < SETUP_RETRY_MAX) {
+        g_search_retries++;
+        g_search_retry_at = esp_timer_get_time() + 4000000;
+        if (g_search_retries == 1 || g_search_retries % 5 == 0) emit_error(code, msg);
+    } else {
+        emit_error(code, "多次重试仍失败，请在 iPhone 上忽略此设备后重新配对");
+    }
+}
+
 // ---- 广播 ----
 static esp_ble_adv_params_t adv_params = {
     .adv_int_min = 0xA0, // 100 ms
@@ -163,7 +179,7 @@ static void configure_advertising(void) {
 
 // ---- 断开后的清理 ----
 static void reset_link(void) {
-    g_connected = g_encrypted = g_ancs_ready = false;
+    g_connected = g_encrypted = g_ancs_ready = g_gattc_open = false;
     g_svc_start = g_svc_end = 0;
     h_ns = h_cp = h_ds = 0;
     g_q_len = g_q_head = 0;
@@ -318,7 +334,7 @@ static void write_cccd(uint16_t char_handle) {
     esp_gatt_status_t st =
         esp_ble_gattc_get_descr_by_char_handle(g_gattc_if, g_conn_id, char_handle, cccd, &d, &count);
     if (st != ESP_GATT_OK || count == 0) {
-        emit_error("cccd", "找不到 ANCS 订阅描述符");
+        schedule_retry("cccd", "找不到 ANCS 订阅描述符，稍后重试");
         return;
     }
     uint8_t on[2] = {0x01, 0x00};
@@ -333,7 +349,7 @@ static void discover_chars(void) {
     esp_ble_gattc_get_attr_count(g_gattc_if, g_conn_id, ESP_GATT_DB_CHARACTERISTIC, g_svc_start, g_svc_end, 0,
                                  &count);
     if (count == 0) {
-        emit_error("ancs_chars", "ANCS 服务里没有特征");
+        schedule_retry("ancs_chars", "ANCS 服务里没有特征，稍后重试");
         return;
     }
     esp_gattc_char_elem_t *chars = calloc(count, sizeof(*chars));
@@ -348,11 +364,24 @@ static void discover_chars(void) {
     }
     free(chars);
     if (!h_ns || !h_cp || !h_ds) {
-        emit_error("ancs_chars", "ANCS 特征不完整");
+        schedule_retry("ancs_chars", "ANCS 特征不完整，稍后重试");
         return;
     }
+    emit_step("已找到 ANCS，正在订阅");
     // 先订阅 Data Source，再订阅 Notification Source（订阅 NS 后 iPhone 立刻补发现有通知）
     subscribe(h_ds);
+}
+
+static void search_ancs(void);
+
+// 加密完成且客户端连接已建立后开始发现 ANCS
+static int64_t g_discovery_at;
+
+static void start_discovery(void) {
+    if (!g_encrypted || !g_gattc_open) return;
+    g_discovery_at = esp_timer_get_time();
+    emit_step("已加密，正在查找 iPhone 的通知服务");
+    if (esp_ble_gattc_send_mtu_req(g_gattc_if, g_conn_id) != ESP_OK) search_ancs();
 }
 
 static void search_ancs(void) {
@@ -390,7 +419,7 @@ static void gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) 
             g_encrypted = true;
             g_pairing_until = 0; // 配对成功后关闭窗口
             emit_state();
-            esp_ble_gattc_send_mtu_req(g_gattc_if, g_conn_id);
+            start_discovery();
         } else {
             char msg[64];
             snprintf(msg, sizeof msg, "加密失败（原因 0x%02x）", param->ble_security.auth_cmpl.fail_reason);
@@ -422,10 +451,33 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
         g_advertising = false;
         g_conn_id = param->connect.conn_id;
         memcpy(g_peer, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+        g_peer_addr_type = param->connect.ble_addr_type;
         g_connected_at = esp_timer_get_time();
         emit_state();
+        {
+            // iPhone 连进来后，在同一条链路上建立 GATT 客户端连接（OPEN_EVT 里拿到可用的 conn_id）
+            esp_ble_gatt_creat_conn_params_t cp = {0};
+            memcpy(cp.remote_bda, g_peer, ESP_BD_ADDR_LEN);
+            cp.remote_addr_type = g_peer_addr_type;
+            cp.own_addr_type = BLE_ADDR_TYPE_PUBLIC;
+            cp.is_direct = true;
+            cp.is_aux = false;
+            cp.phy_mask = 0;
+            esp_ble_gattc_enh_open(g_gattc_if, &cp);
+        }
         // 已绑定的 iPhone 用保存的密钥直接加密；新 iPhone 会进入配对（SEC_REQ_EVT 里决定是否接受）
         esp_ble_set_encryption(g_peer, ESP_BLE_SEC_ENCRYPT_NO_MITM);
+        break;
+    case ESP_GATTC_OPEN_EVT:
+        if (param->open.status == ESP_GATT_OK) {
+            g_conn_id = param->open.conn_id;
+            g_gattc_open = true;
+            start_discovery();
+        } else {
+            char msg[64];
+            snprintf(msg, sizeof msg, "建立 GATT 客户端连接失败（0x%02x）", param->open.status);
+            emit_error("gattc_open", msg);
+        }
         break;
     case ESP_GATTC_DISCONNECT_EVT:
         reset_link();
@@ -444,12 +496,9 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
     case ESP_GATTC_SEARCH_CMPL_EVT:
         if (g_svc_start) {
             discover_chars();
-        } else if (g_search_retries < 3) {
-            // iPhone 偶尔在加密后稍晚才公开 ANCS
-            g_search_retries++;
-            g_search_retry_at = esp_timer_get_time() + 2000000;
         } else {
-            emit_error("no_ancs", "这台设备没有 ANCS 服务（不是 iPhone？）");
+            // iPhone 在加密后、或用户允许共享通知后才公开 ANCS
+            schedule_retry("no_ancs", "还没有找到 iPhone 的通知服务：请在 iPhone 蓝牙设置里打开 NotiBridge 的“共享系统通知”");
         }
         break;
     case ESP_GATTC_SRVC_CHG_EVT:
@@ -464,20 +513,21 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
             g_cccd_target = param->reg_for_notify.handle;
             write_cccd(param->reg_for_notify.handle);
         } else {
-            emit_error("notify_reg", "订阅 ANCS 失败");
+            schedule_retry("notify_reg", "订阅 ANCS 失败，稍后重试");
         }
         break;
     case ESP_GATTC_WRITE_DESCR_EVT:
         if (param->write.status != ESP_GATT_OK) {
-            char msg[48];
-            snprintf(msg, sizeof msg, "写入 ANCS 订阅失败（0x%02x）", param->write.status);
-            emit_error("cccd_write", msg);
+            char msg[128];
+            snprintf(msg, sizeof msg, "iPhone 拒绝订阅通知（0x%02x），请允许共享系统通知", param->write.status);
+            schedule_retry("cccd_write", msg);
             break;
         }
         if (g_cccd_target == h_ds) {
             subscribe(h_ns);
         } else if (g_cccd_target == h_ns) {
             g_ancs_ready = true;
+            g_search_retries = 0;
             emit_state();
             pump();
         }
@@ -528,7 +578,18 @@ static void tick(void *arg) {
         esp_ble_gap_disconnect(g_peer);
         g_connected_at = now; // 避免重复断开
     }
+    // 发现过程卡住（没有任何回调）时重来
+    if (g_encrypted && g_gattc_open && !g_ancs_ready && g_search_retry_at == 0 && g_discovery_at > 0 &&
+        now - g_discovery_at > 10000000) {
+        g_discovery_at = now;
+        schedule_retry("stuck", "查找通知服务没有响应，正在重试");
+    }
+    if (g_connected && g_encrypted && !g_gattc_open && now - g_connected_at > 15000000) {
+        g_connected_at = now;
+        emit_error("gattc_open", "GATT 客户端连接没有建立");
+    }
     if (g_search_retry_at > 0 && now >= g_search_retry_at) {
+        g_discovery_at = now;
         g_search_retry_at = 0;
         if (g_encrypted) search_ancs();
     }

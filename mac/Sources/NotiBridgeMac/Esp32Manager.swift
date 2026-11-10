@@ -71,6 +71,8 @@ final class Esp32Manager: ObservableObject {
     /// 与固件的连接（nil 表示未连接）
     @Published var link: Esp32LinkState?
     @Published var linkError = ""
+    /// 固件最近报告的问题（iPhone 连上后清除）
+    @Published var iphoneProblem = ""
 
     /// 收到固件事件（AppModel 处理通知）
     var onEvent: ((Esp32Event) -> Void)?
@@ -330,7 +332,9 @@ final class Esp32Manager: ObservableObject {
             firmware = .found(version: version)
         case let .state(s):
             link = s
+            if s.ble == "ready" { iphoneProblem = "" }
         case let .error(code, msg):
+            iphoneProblem = msg
             onLog?("ESP32：\(msg)（\(code)）")
         default:
             break

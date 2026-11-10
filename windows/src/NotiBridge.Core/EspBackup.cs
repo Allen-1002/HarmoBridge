@@ -75,6 +75,8 @@ public static class EspFirmwareInstaller
 {
     public const uint FirmwareOffset = 0x1000;
     private const uint AppOffset = 0x10000;
+    /// <summary>NVS（iPhone 配对保存在这里）与 phy_init 分区：[0x9000, 0x10000)</summary>
+    private const uint NvsOffset = 0x9000;
     private const string ProjectName = "notibridge_esp32";
     private const int BlockSize = 64 * 1024;
 
@@ -121,13 +123,14 @@ public static class EspFirmwareInstaller
         f.Begin();
         var mac = f.ReadMac();
         uint end = FirmwareOffset + (uint)image.Length;
+        bool isNotiBridge = HasNotiBridgeFirmware(f);
         BackupOutcome outcome;
         if (store.Info(mac) is { } info)
         {
             if (end > info.TouchedEnd) store.SaveInfo(info with { TouchedEnd = end });
             outcome = BackupOutcome.Kept;
         }
-        else if (HasNotiBridgeFirmware(f))
+        else if (isNotiBridge)
         {
             outcome = BackupOutcome.AlreadyNotiBridge;
         }
@@ -139,7 +142,17 @@ public static class EspFirmwareInstaller
             log?.Invoke($"已备份板子 {mac} 的原固件");
             outcome = BackupOutcome.Created;
         }
-        f.Write(image, FirmwareOffset);
+        int nvsStart = (int)(NvsOffset - FirmwareOffset), nvsEnd = (int)(AppOffset - FirmwareOffset);
+        if (isNotiBridge && image.Length > nvsEnd)
+        {
+            // 更新 NotiBridge 固件：跳过 NVS 和 phy_init 分区，保留 iPhone 配对
+            f.Write(image[..nvsStart], FirmwareOffset);
+            f.Write(image[nvsEnd..], AppOffset);
+        }
+        else
+        {
+            f.Write(image, FirmwareOffset);
+        }
         f.Finish();
         return outcome;
     }

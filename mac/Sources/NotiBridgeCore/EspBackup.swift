@@ -93,6 +93,8 @@ public final class EspBackupStore {
 public enum EspFirmwareInstaller {
     public static let firmwareOffset: UInt32 = 0x1000
     static let appOffset: UInt32 = 0x10000
+    /// NVS（iPhone 配对保存在这里）与 phy_init 分区：[0x9000, 0x10000)
+    static let nvsOffset: UInt32 = 0x9000
     static let projectName = "notibridge_esp32"
     static let blockSize = 64 * 1024
 
@@ -145,6 +147,7 @@ public enum EspFirmwareInstaller {
         try f.begin()
         let mac = try f.readMac()
         let end = firmwareOffset + UInt32(image.count)
+        let isNotiBridge = try hasNotiBridgeFirmware(f)
         let outcome: BackupOutcome
         if var info = store.info(mac: mac) {
             // 记录写过的最远位置，还原时覆盖到这里
@@ -153,7 +156,7 @@ public enum EspFirmwareInstaller {
                 try store.saveInfo(info)
             }
             outcome = .kept
-        } else if try hasNotiBridgeFirmware(f) {
+        } else if isNotiBridge {
             outcome = .alreadyNotiBridge
         } else {
             onStage?(.backingUp(0))
@@ -164,7 +167,14 @@ public enum EspFirmwareInstaller {
             log?("已备份板子 \(mac) 的原固件")
             outcome = .created
         }
-        try f.write(image: image, offset: firmwareOffset)
+        let nvsStart = Int(nvsOffset - firmwareOffset), nvsEnd = Int(appOffset - firmwareOffset)
+        if isNotiBridge && image.count > nvsEnd {
+            // 更新 NotiBridge 固件：跳过 NVS 和 phy_init 分区，保留 iPhone 配对
+            try f.write(image: Array(image[0..<nvsStart]), offset: firmwareOffset)
+            try f.write(image: Array(image[nvsEnd...]), offset: appOffset)
+        } else {
+            try f.write(image: image, offset: firmwareOffset)
+        }
         try f.finish()
         return outcome
     }

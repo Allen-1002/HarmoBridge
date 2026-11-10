@@ -111,7 +111,10 @@ public sealed partial class Esp32Manager : ObservableObject
         }
     }
     public bool ShowIphone => UseEsp32 && FirmwareOk;
-    public string LinkText => _link?.Label ?? (_linkError.Length > 0 ? _linkError : "正在连接 ESP32…");
+    private string _iphoneProblem = "";
+    public string LinkText => _link is { } l
+        ? (!l.Ready && _iphoneProblem.Length > 0 ? $"{l.Label}：{_iphoneProblem}" : l.Label)
+        : (_linkError.Length > 0 ? _linkError : "正在连接 ESP32…");
     public bool PairHintVisible => _link is { } l && (l.Bonds == 0 || l.Pairing);
     public bool HasBonds => _link is { Bonds: > 0 };
 
@@ -390,9 +393,12 @@ public sealed partial class Esp32Manager : ObservableObject
                 SetFound(h.Version);
                 break;
             case Esp32Event.State s:
+                if (s.Link.Ready) _iphoneProblem = "";
                 Link = s.Link;
                 break;
             case Esp32Event.Error er:
+                _iphoneProblem = er.Message;
+                Raise(nameof(LinkText));
                 LogLine?.Invoke($"ESP32：{er.Message}（{er.Code}）");
                 break;
         }

@@ -35,7 +35,7 @@
                 <TextBlock Text="{Binding LinkText}" FontWeight="SemiBold" />
                 <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            Visibility="{Binding PairHintVisible, Converter={StaticResource BoolToVis}}"
-                           Text="在 iPhone 上打开「设置 › 蓝牙」，点 NotiBridge 并允许配对，然后在弹窗里允许“显示通知”。配对窗口约 3 分钟。" />
+                           Text="在 iPhone 上打开「设置 › 蓝牙」，点 NotiBridge 并允许配对，然后在弹窗里允许共享通知（或在 NotiBridge 右边的 ⓘ 里打开“共享系统通知”）。配对窗口约 3 分钟。" />
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                     <Button Content="配对新的 iPhone" Click="OnPair" Margin="0,0,8,0" />
                     <Button Content="删除 iPhone 配对" Click="OnForget" Visibility="{Binding HasBonds, Converter={StaticResource BoolToVis}}" />

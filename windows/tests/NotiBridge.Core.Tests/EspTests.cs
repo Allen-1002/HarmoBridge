@@ -273,6 +273,12 @@ public class EspBackupTests
         Assert.Equal(0x41000u, store.Info(Mac)!.TouchedEnd);
 
         for (int i = 0x9000; i < 0x9100; i++) rom.Flash[i] = 0x99;
+        FakeApp(rom, "notibridge_esp32");
+        var fw3 = Enumerable.Repeat((byte)0x33, 0x40000).ToArray();
+        Assert.Equal(EspFirmwareInstaller.BackupOutcome.Kept, EspFirmwareInstaller.Install(fw3, rom, store, resetDelay: Zero));
+        Assert.Equal(0x99, rom.Flash[0x9000]);
+        Assert.Equal(0x33, rom.Flash[0x8FFF]);
+        Assert.Equal(0x33, rom.Flash[0x10000]);
         EspFirmwareInstaller.Restore(rom, store, resetDelay: Zero);
         Assert.Equal(original, rom.Flash);
         Assert.False(rom.InBootloader);

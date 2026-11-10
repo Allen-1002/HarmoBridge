@@ -152,8 +152,14 @@ final class EspBackupTests: XCTestCase {
         XCTAssertEqual(try EspFirmwareInstaller.install(image: fw2, port: rom, store: store, resetDelay: 0), .kept)
         XCTAssertEqual(store.info(mac: "1c:8f:57:16:d3:44")?.touchedEnd, 0x41000)
 
-        // 模拟固件运行时写了 NVS
+        // 模拟固件运行时写了 NVS（iPhone 配对）；更新固件时要保留
         for i in 0x9000..<0x9100 { rom.flash[i] = 0x99 }
+        fakeApp(rom, name: "notibridge_esp32")
+        let fw3 = [UInt8](repeating: 0x33, count: 0x40000)
+        XCTAssertEqual(try EspFirmwareInstaller.install(image: fw3, port: rom, store: store, resetDelay: 0), .kept)
+        XCTAssertEqual(rom.flash[0x9000], 0x99)
+        XCTAssertEqual(rom.flash[0x8FFF], 0x33)
+        XCTAssertEqual(rom.flash[0x10000], 0x33)
         _ = try EspFirmwareInstaller.restore(port: rom, store: store, resetDelay: 0)
         XCTAssertEqual(rom.flash, original)
         XCTAssertFalse(rom.inBootloader)
