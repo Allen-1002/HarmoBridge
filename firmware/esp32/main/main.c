@@ -783,7 +783,7 @@ static void handle_command(char *line) {
     } else if (strncmp(line, "BAUD ", 5) == 0) {
         // 通话时电脑把串口提速（音频需要约 70 KB/s）；电脑 3 秒没有数据就自动回到 115200
         int b = atoi(line + 5);
-        if (b == 115200 || b == 921600 || b == 1500000 || b == 2000000) {
+        if (b == 115200 || b == 1000000 || b == 1500000 || b == 2000000) {
             serial_eventf("{\"t\":\"baud\",\"value\":%d}", b);
             serial_set_baud(b);
         } else {

@@ -503,7 +503,7 @@ final class Esp32Manager: ObservableObject {
                                 let v = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
                                 if !askedHigh && !highBaudFailed && baud == 115_200 && (UpdateCore.compareVersions(v, "1.3.0") ?? -1) >= 0 {
                                     askedHigh = true
-                                    try write(port, Array("BAUD 2000000\n".utf8))
+                                    try write(port, Array("BAUD 1000000\n".utf8))
                                 }
                             }
                             if line.hasPrefix("@{\"t\":\"baud\""), let r = line.range(of: "\"value\":") {
