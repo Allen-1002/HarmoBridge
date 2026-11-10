@@ -70,7 +70,7 @@ public sealed record PhoneCall(string State, string Number, int Held)
 }
 
 /// <summary>配对过的手机（经典蓝牙）</summary>
-public sealed record PairedPhone(string Id, string Name, bool Connected)
+public sealed record PairedPhone(string Id, string Name, bool Connected, bool Preferred = false)
 {
     public string DisplayName => Name.Length == 0 ? "手机" : Name;
 }
@@ -147,7 +147,7 @@ public static class Esp32LinkParser
                 "call" => new Esp32Event.Call(new PhoneCall(S("state").Length == 0 ? "idle" : S("state"), S("number"), I("held"))),
                 "phones" => new Esp32Event.Phones(o.TryGetProperty("list", out var pl) && pl.ValueKind == JsonValueKind.Array
                     ? pl.EnumerateArray().Where(b => b.ValueKind == JsonValueKind.Object)
-                        .Select(b => new PairedPhone(Str(b, "addr"), Str(b, "name"), Bool(b, "connected")))
+                        .Select(b => new PairedPhone(Str(b, "addr"), Str(b, "name"), Bool(b, "connected"), Bool(b, "preferred")))
                         .Where(b => b.Id.Length > 0).ToList()
                     : []),
                 "pair_code" => new Esp32Event.PairCode(S("code")),

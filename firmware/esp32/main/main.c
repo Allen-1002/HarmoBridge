@@ -31,7 +31,10 @@
 static const char *TAG = "nb";
 
 #define PROTO_VERSION 1
-#define DEVICE_NAME "NotiBridge"
+// 两个名字分开：低功耗蓝牙只给 iPhone 收通知用；经典蓝牙给所有手机打电话用。
+// ESP32 的经典蓝牙不支持“安全连接”，iPhone 不会把两种配对合并，分开命名、分开地址最清楚。
+#define DEVICE_NAME "NotiBridge 通知"
+#define CLASSIC_NAME "NotiBridge 通话"
 #define PAIRING_WINDOW_US (180LL * 1000 * 1000)
 #define REQUEST_TIMEOUT_US (5LL * 1000 * 1000)
 #define ENCRYPT_TIMEOUT_US (30LL * 1000 * 1000)
@@ -115,6 +118,12 @@ static void app_name_store(const char *id, const char *name) {
     g_apps_next = (g_apps_next + 1) % APP_CACHE;
 }
 
+static void ble_static_addr(uint8_t *a) {
+    const uint8_t *pub = esp_bt_dev_get_address();
+    for (int i = 0; i < 6; i++) a[i] = pub[i] ^ (uint8_t)(0x5A + i * 17);
+    a[0] |= 0xC0; // 静态随机地址：最高两位为 1
+}
+
 static void fmt_bda(const uint8_t *b, char *out) {
     sprintf(out, "%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]);
 }
@@ -166,7 +175,7 @@ static esp_ble_adv_params_t adv_params = {
     .adv_int_min = 0xA0, // 100 ms
     .adv_int_max = 0xF0, // 150 ms
     .adv_type = ADV_TYPE_IND,
-    .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
+    .own_addr_type = BLE_ADDR_TYPE_RANDOM, // 独立的静态随机地址，见 ble_static_addr
     .channel_map = ADV_CHNL_ALL,
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
@@ -468,6 +477,13 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
     case ESP_GATTC_REG_EVT:
         g_gattc_if = gattc_if;
         esp_ble_gap_set_device_name(DEVICE_NAME);
+        // 低功耗蓝牙用一个固定的静态随机地址（由芯片地址算出，重启不变），和经典蓝牙地址不同，
+        // iPhone 才会把“通知”和“通话”显示成两个设备、各自配对
+        {
+            esp_bd_addr_t a;
+            ble_static_addr(a);
+            esp_ble_gap_set_rand_addr(a);
+        }
         configure_advertising();
         break;
     case ESP_GATTC_CONNECT_EVT:
@@ -484,7 +500,7 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
             esp_ble_gatt_creat_conn_params_t cp = {0};
             memcpy(cp.remote_bda, g_peer, ESP_BD_ADDR_LEN);
             cp.remote_addr_type = g_peer_addr_type;
-            cp.own_addr_type = BLE_ADDR_TYPE_PUBLIC;
+            cp.own_addr_type = BLE_ADDR_TYPE_RANDOM;
             cp.is_direct = true;
             cp.is_aux = false;
             cp.phy_mask = 0;
@@ -732,7 +748,9 @@ static void remove_all_bonds(void) {
 static void handle_command(char *line) {
     if (strcmp(line, "HB?") == 0) {
         char buf[128], mac[18];
-        fmt_bda(esp_bt_dev_get_address(), mac);
+        esp_bd_addr_t ble;
+        ble_static_addr(ble);
+        fmt_bda(ble, mac);
         snprintf(buf, sizeof buf, "HB-ESP32 %s chip=esp32 ble=%s proto=%d", esp_app_get_description()->version,
                  mac, PROTO_VERSION);
         serial_send_line(buf);
@@ -818,7 +836,7 @@ void app_main(void) {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &init_key, 1);
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, 1);
 
-    esp_bt_gap_set_device_name(DEVICE_NAME);
+    esp_bt_gap_set_device_name(CLASSIC_NAME);
     hfp_init(pairing_window_open);
     ESP_ERROR_CHECK(esp_ble_gap_register_callback(gap_cb));
     ESP_ERROR_CHECK(esp_ble_gattc_register_callback(gattc_cb));

@@ -414,6 +414,15 @@ final class Esp32Manager: ObservableObject {
     func setAudioToPC(_ on: Bool) { send(on ? "AUDIO PC" : "AUDIO PHONE") }
     func connectPhone(_ id: String? = nil) { send(id.map { "HFP CONNECT \($0)" } ?? "HFP CONNECT") }
     func disconnectPhone() { send("HFP DISCONNECT") }
+    private static func isAddr(_ id: String) -> Bool {
+        id.range(of: "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$", options: .regularExpression) != nil
+    }
+    /// 设为通话优先手机（nil 取消）
+    func preferPhone(_ id: String?) {
+        if let id { if Self.isAddr(id) { send("PREFER \(id)") } } else { send("PREFER NONE") }
+    }
+    /// 通话切换到这台手机（断开当前的再连它）
+    func switchPhone(_ id: String) { if Self.isAddr(id) { send("SWITCH \(id)") } }
     /// 删除一台手机的通话配对（id 是 PairedPhone.id）
     func forgetPhone(_ id: String) {
         guard id.range(of: "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$", options: .regularExpression) != nil else { return }

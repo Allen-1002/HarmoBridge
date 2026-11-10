@@ -79,14 +79,18 @@ struct CallRow: View {
                 Image(systemName: p.connected ? "phone.connection" : "phone")
                 Text(p.displayName)
                 Text(p.connected ? "已连接" : "未连接").foregroundStyle(.secondary).font(.caption)
+                if p.preferred { Text("优先").font(.caption).foregroundStyle(.tint) }
                 Spacer()
-                if !p.connected { Button("连接") { esp.connectPhone(p.id) } }
+                if !p.connected { Button(esp.hfp?.connected == true ? "切换到这台" : "连接") { esp.switchPhone(p.id) } }
+                if esp.phones.count > 1 {
+                    Button(p.preferred ? "取消优先" : "设为优先") { esp.preferPhone(p.preferred ? nil : p.id) }
+                }
                 Button("删除") { confirmForget = p }
             }
         }
         HStack {
             Button(esp.phones.isEmpty ? "配对手机" : "配对新手机") { esp.pairNewIphone() }
-            Text("然后在手机「设置 › 蓝牙」里点 NotiBridge。安卓、鸿蒙、iPhone 都可以。")
+            Text("然后在手机「设置 › 蓝牙」里点“NotiBridge 通话”。安卓、鸿蒙、iPhone 都可以；同一时间只能有一台手机连着通话。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

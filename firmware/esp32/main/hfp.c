@@ -79,6 +79,39 @@ static bool last_peer(esp_bd_addr_t out) {
     return nv_get_str("last", s, sizeof s) && parse(s, out);
 }
 
+static bool is_bonded(const uint8_t *bda);
+
+static bool pref_peer(esp_bd_addr_t out) {
+    char s[18];
+    return nv_get_str("pref", s, sizeof s) && parse(s, out);
+}
+
+// 回连顺序：通话优先手机 → 上次连接的手机 → 其他配对过的手机。每次尝试下一台，一轮都不在才拉长间隔。
+static int s_try_index;
+static esp_bd_addr_t s_switch_to; // 手动切换：断开当前手机后连这台
+static bool s_switch_pending;
+
+static int candidates(esp_bd_addr_t *out, int cap) {
+    int n = 0;
+    esp_bd_addr_t a;
+    if (pref_peer(a) && is_bonded(a)) memcpy(out[n++], a, 6);
+    if (last_peer(a) && is_bonded(a) && (n == 0 || memcmp(out[0], a, 6) != 0)) memcpy(out[n++], a, 6);
+    int m = esp_bt_gap_get_bond_device_num();
+    if (m > 0) {
+        esp_bd_addr_t *list = calloc(m, sizeof(esp_bd_addr_t));
+        if (list) {
+            esp_bt_gap_get_bond_device_list(&m, list);
+            for (int i = 0; i < m && n < cap; i++) {
+                bool dup = false;
+                for (int j = 0; j < n; j++) dup |= memcmp(out[j], list[i], 6) == 0;
+                if (!dup) memcpy(out[n++], list[i], 6);
+            }
+            free(list);
+        }
+    }
+    return n;
+}
+
 static bool is_bonded(const uint8_t *bda) {
     int n = esp_bt_gap_get_bond_device_num();
     if (n <= 0) return false;
@@ -152,8 +185,10 @@ static void emit_phones(void) {
         json_escape(name, esc, sizeof esc);
         bool conn = s_has_peer && memcmp(list[i], s_peer, 6) == 0 &&
                     s_conn == ESP_HF_CLIENT_CONNECTION_STATE_SLC_CONNECTED;
-        o += snprintf(buf + o, sizeof buf - o, "%s{\"addr\":\"%s\",\"name\":\"%s\",\"connected\":%s}", i ? "," : "",
-                      addr, esc, conn ? "true" : "false");
+        esp_bd_addr_t pref;
+        bool preferred = pref_peer(pref) && memcmp(pref, list[i], 6) == 0;
+        o += snprintf(buf + o, sizeof buf - o, "%s{\"addr\":\"%s\",\"name\":\"%s\",\"connected\":%s,\"preferred\":%s}",
+                      i ? "," : "", addr, esc, conn ? "true" : "false", preferred ? "true" : "false");
     }
     snprintf(buf + o, sizeof buf - o, "]}");
     free(list);
@@ -423,13 +458,29 @@ void hfp_tick(void) {
     int64_t now = esp_timer_get_time();
     if (s_conn == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED && !s_user_disconnected && s_next_reconnect > 0 &&
         now >= s_next_reconnect) {
-        esp_bd_addr_t a;
-        if (last_peer(a) && is_bonded(a)) {
-            esp_hf_client_connect(a);
-            // 手机不在附近时逐渐拉长间隔，最长 1 分钟
-            s_backoff = s_backoff * 2 > RECONNECT_MAX_US ? RECONNECT_MAX_US : s_backoff * 2;
+        if (s_switch_pending) {
+            s_switch_pending = false;
+            esp_hf_client_connect(s_switch_to);
+            s_next_reconnect = now + 15000000; // 给手动切换的手机 15 秒
+        } else {
+            esp_bd_addr_t list[8];
+            int n = candidates(list, 8);
+            if (n > 0) {
+                if (s_try_index >= n) s_try_index = 0;
+                esp_hf_client_connect(list[s_try_index]);
+                s_try_index++;
+                // 一轮都不在附近：逐渐拉长间隔，最长 1 分钟
+                if (s_try_index >= n) {
+                    s_try_index = 0;
+                    s_backoff = s_backoff * 2 > RECONNECT_MAX_US ? RECONNECT_MAX_US : s_backoff * 2;
+                    s_next_reconnect = now + s_backoff;
+                } else {
+                    s_next_reconnect = now + 8000000; // 连接一台手机最多等约 8 秒，再试下一台
+                }
+            } else {
+                s_next_reconnect = now + s_backoff;
+            }
         }
-        s_next_reconnect = now + s_backoff;
     }
     update_scan_mode();
     UNLOCK();
@@ -470,6 +521,26 @@ bool hfp_handle_command(const char *line) {
             esp_hf_client_connect(a);
         } else {
             serial_eventf("{\"t\":\"err\",\"code\":\"no_phone\",\"msg\":\"还没有配对过手机\"}");
+        }
+    } else if (strncmp(line, "PREFER ", 7) == 0) {
+        esp_bd_addr_t a;
+        if (strcmp(line + 7, "NONE") == 0) nv_set_str("pref", NULL);
+        else if (parse(line + 7, a)) nv_set_str("pref", line + 7);
+        emit_phones();
+    } else if (strncmp(line, "SWITCH ", 7) == 0) {
+        esp_bd_addr_t a;
+        if (parse(line + 7, a) && is_bonded(a)) {
+            s_user_disconnected = false;
+            if (s_conn != ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED && s_has_peer && memcmp(a, s_peer, 6) != 0) {
+                memcpy(s_switch_to, a, 6);
+                s_switch_pending = true;
+                s_next_reconnect = esp_timer_get_time() + 1500000;
+                esp_hf_client_disconnect(s_peer);
+            } else if (s_conn == ESP_HF_CLIENT_CONNECTION_STATE_DISCONNECTED) {
+                esp_hf_client_connect(a);
+            }
+        } else {
+            serial_eventf("{\"t\":\"err\",\"code\":\"no_phone\",\"msg\":\"这台手机还没有配对\"}");
         }
     } else if (strcmp(line, "HFP DISCONNECT") == 0) {
         s_user_disconnected = true;

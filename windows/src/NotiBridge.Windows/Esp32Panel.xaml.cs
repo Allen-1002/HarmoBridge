@@ -126,7 +126,12 @@ public partial class Esp32Panel : UserControl
         HangUpButton.Content = c.State == "incoming" ? "拒接" : "挂断";
         DialRow.Visibility = connected && c.IsIdle ? Visibility.Visible : Visibility.Collapsed;
         PhoneList.ItemsSource = supported
-            ? esp.Phones.Select(p => new { p.Id, Name = p.DisplayName, Status = p.Connected ? " 已连接" : " 未连接", CanConnect = !p.Connected }).ToList()
+            ? esp.Phones.Select(p => new
+            {
+                p.Id, Name = p.DisplayName, Status = (p.Connected ? " 已连接" : " 未连接") + (p.Preferred ? " · 优先" : ""),
+                CanConnect = !p.Connected, ConnectText = esp.Hfp is { Connected: true } ? "切换到这台" : "连接",
+                CanPrefer = esp.Phones.Count > 1, PreferText = p.Preferred ? "取消优先" : "设为优先", p.Preferred,
+            }).ToList()
             : null;
         PairPhoneRow.Visibility = supported ? Visibility.Visible : Visibility.Collapsed;
         PairPhoneButton.Content = esp.Phones.Count == 0 ? "配对手机" : "配对新手机";
@@ -143,7 +148,12 @@ public partial class Esp32Panel : UserControl
     private void OnPairPhone(object sender, RoutedEventArgs e) => Esp?.PairNewIphone();
     private void OnConnectPhone(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: string id }) Esp?.ConnectPhone(id);
+        if (sender is FrameworkElement { Tag: string id }) Esp?.SwitchPhone(id);
+    }
+    private void OnPreferPhone(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string id } && Esp is { } esp)
+            esp.PreferPhone(esp.Phones.FirstOrDefault(p => p.Id == id) is { Preferred: true } ? null : id);
     }
     private void OnForgetPhone(object sender, RoutedEventArgs e)
     {

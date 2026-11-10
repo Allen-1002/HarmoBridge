@@ -84,11 +84,14 @@ public struct PairedPhone: Identifiable, Equatable {
     public var id: String
     public var name: String
     public var connected: Bool
+    /// 通话优先手机：在附近就先连它
+    public var preferred: Bool
 
-    public init(id: String, name: String, connected: Bool) {
+    public init(id: String, name: String, connected: Bool, preferred: Bool = false) {
         self.id = id
         self.name = name
         self.connected = connected
+        self.preferred = preferred
     }
 
     public var displayName: String { name.isEmpty ? "手机" : name }
@@ -233,7 +236,8 @@ public enum Esp32LinkParser {
             let list = obj["list"] as? [[String: Any]] ?? []
             return .phones(list.compactMap { b in
                 guard let addr = b["addr"] as? String, !addr.isEmpty else { return nil }
-                return PairedPhone(id: addr, name: b["name"] as? String ?? "", connected: b["connected"] as? Bool ?? false)
+                return PairedPhone(id: addr, name: b["name"] as? String ?? "", connected: b["connected"] as? Bool ?? false,
+                                   preferred: b["preferred"] as? Bool ?? false)
             })
         case "pair_code":
             return .pairCode(s("code"))

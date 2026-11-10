@@ -464,6 +464,18 @@ public sealed partial class Esp32Manager : ObservableObject
     public void Redial() => Send("REDIAL");
     public void SetAudioToPC(bool on) => Send(on ? "AUDIO PC" : "AUDIO PHONE");
     public void ConnectPhone(string? id = null) => Send(id is null ? "HFP CONNECT" : $"HFP CONNECT {id}");
+    private static bool IsAddr(string id) => System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$");
+    /// <summary>设为通话优先手机（null 取消）</summary>
+    public void PreferPhone(string? id)
+    {
+        if (id is null) Send("PREFER NONE");
+        else if (IsAddr(id)) Send($"PREFER {id}");
+    }
+    /// <summary>通话切换到这台手机</summary>
+    public void SwitchPhone(string id)
+    {
+        if (IsAddr(id)) Send($"SWITCH {id}");
+    }
     /// <summary>删除一台手机的通话配对</summary>
     public void ForgetPhone(string id)
     {
