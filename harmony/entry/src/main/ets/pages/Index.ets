@@ -279,8 +279,7 @@ struct Index {
           .layoutWeight(1)
 
           Toggle({ type: ToggleType.Switch, isOn: this.status.syncOn })
-            .selectedColor('#33FFFFFF')
-            .switchPointColor(Color.White)
+            .selectedColor($r('app.color.hb_accent')) // 和其他开关一样：打开蓝色，关闭灰色
             .onChange((on: boolean) => this.updateSettings((s: SyncSettings) => {
               s.paused = !on;
             }))

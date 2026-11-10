@@ -188,7 +188,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    var isPhoneOnline: Bool { !onlineDevices.isEmpty }
+    /// 有手机 App 在线，或有经 ESP32 的 iPhone 已就绪
+    var isPhoneOnline: Bool { !onlineDevices.isEmpty || iphoneDevices.contains(where: \.ancsReady) }
 
     /// 最近一次与手机通信（含通知订阅扩展的按需连接）
     @Published var lastSync: Date?
@@ -196,13 +197,13 @@ final class AppModel: ObservableObject {
     var statusSymbol: String {
         if paused { return "pause.circle" }
         if isPhoneOnline { return "iphone.radiowaves.left.and.right" }
-        return pairedDevices.isEmpty ? "iphone.slash" : "iphone"
+        return hasAnyDevice ? "iphone" : "iphone.slash"
     }
 
     /// 手机 App 不在前台时，通知由系统拉起的订阅扩展按需连接转发，所以“未连接”不等于收不到通知。
     var phoneStatusText: String {
         if isPhoneOnline { return "已连接" }
-        if pairedDevices.isEmpty { return "未配对" }
+        if !hasAnyDevice { return "未配对" }
         guard let lastSync else { return "待命（有通知时自动连接）" }
         return "待命 · 最近同步 \(lastSync.formatted(date: .omitted, time: .shortened))"
     }

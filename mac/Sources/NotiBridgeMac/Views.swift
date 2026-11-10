@@ -256,7 +256,7 @@ struct StatusMenu: View {
             Toggle("", isOn: Binding(get: { !model.paused }, set: { model.paused = !$0 }))
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .tint(.white.opacity(0.4))
+                .tint(.accentColor) // 和其他开关一样：打开蓝色，关闭灰色
                 .disabled(!model.hasAnyDevice)
         }
         .padding(16)
@@ -561,7 +561,7 @@ struct OverviewView: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .controlSize(.large)
-                .tint(.white.opacity(0.4))
+                .tint(.accentColor) // 和其他开关一样：打开蓝色，关闭灰色
                 .disabled(!model.hasAnyDevice)
         }
         .padding(24)
