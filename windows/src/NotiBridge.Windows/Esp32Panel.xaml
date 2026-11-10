@@ -66,9 +66,44 @@
         </DockPanel>
         <!-- 通话 -->
         <DockPanel Margin="0,0,0,8">
-            <TextBlock Width="22" Text="○" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            <TextBlock x:Name="CallMark" Width="22" FontWeight="Bold" />
             <TextBlock Style="{StaticResource RowTitle}" Text="通话" />
-            <TextBlock Style="{StaticResource RowHint}" Text="即将支持：安卓、鸿蒙和 iPhone 都能在电脑上接打电话" />
+            <StackPanel>
+                <TextBlock x:Name="CallText" Style="{StaticResource RowHint}" />
+                <TextBlock x:Name="PairCodeText" TextWrapping="Wrap" Margin="0,4,0,0" />
+                <!-- 当前通话 -->
+                <StackPanel x:Name="CallActive" Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBlock x:Name="CallLabel" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <Button x:Name="AnswerButton" Content="接听" Click="OnAnswer" Margin="0,0,8,0" />
+                    <Button x:Name="HangUpButton" Content="挂断" Click="OnHangUp" />
+                </StackPanel>
+                <!-- 拨号 -->
+                <StackPanel x:Name="DialRow" Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBox x:Name="DialBox" Width="180" Margin="0,0,8,0" KeyDown="OnDialKey" />
+                    <Button Content="拨打" Click="OnDial" Margin="0,0,8,0" />
+                    <Button Content="重拨" Click="OnRedial" />
+                </StackPanel>
+                <ItemsControl x:Name="PhoneList" Margin="0,6,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Margin="0,2,0,2">
+                                <Button Content="删除" Tag="{Binding Id}" Click="OnForgetPhone" DockPanel.Dock="Right" Margin="8,0,0,0" />
+                                <Button Content="连接" Tag="{Binding Id}" Click="OnConnectPhone" DockPanel.Dock="Right"
+                                        Visibility="{Binding CanConnect, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock VerticalAlignment="Center">
+                                    <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <Run Text="{Binding Status, Mode=OneWay}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </TextBlock>
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <StackPanel x:Name="PairPhoneRow" Orientation="Horizontal" Margin="0,6,0,0">
+                    <Button x:Name="PairPhoneButton" Content="配对手机" Click="OnPairPhone" Margin="0,0,8,0" />
+                    <TextBlock Style="{StaticResource RowHint}" VerticalAlignment="Center" FontSize="12"
+                               Text="然后在手机「设置 › 蓝牙」里点 NotiBridge。安卓、鸿蒙、iPhone 都可以。" />
+                </StackPanel>
+            </StackPanel>
         </DockPanel>
         <!-- 高级 -->
         <Expander Header="高级" Margin="0,4,0,0">

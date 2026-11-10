@@ -427,6 +427,9 @@ public sealed partial class Esp32Manager : ObservableObject
         _linkThread = null;
         Link = null;
         Iphones = [];
+        Hfp = null;
+        Call = PhoneCall.Idle;
+        Phones = [];
     }
 
     /// <summary>打开配对窗口（3 分钟），让新的 iPhone 配对</summary>
@@ -437,6 +440,34 @@ public sealed partial class Esp32Manager : ObservableObject
     public void ForgetIphone(string id)
     {
         if (System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")) Send($"UNPAIR {id}");
+    }
+
+    // ---- 通话（固件 1.3.0 起）----
+    private HfpLink? _hfp;
+    private PhoneCall _call = PhoneCall.Idle;
+    private IReadOnlyList<PairedPhone> _phones = [];
+    private string? _pairCode;
+    public HfpLink? Hfp { get => _hfp; private set => Set(ref _hfp, value); }
+    public PhoneCall Call { get => _call; private set => Set(ref _call, value); }
+    public IReadOnlyList<PairedPhone> Phones { get => _phones; private set => Set(ref _phones, value); }
+    public string? PairCode { get => _pairCode; private set => Set(ref _pairCode, value); }
+    public bool FirmwareSupportsCalls => FirmwareOk && (UpdateCore.CompareVersions(_firmwareVersion, "1.3.0") ?? -1) >= 0;
+
+    public void Answer() => Send("ANSWER");
+    /// <summary>来电时拒接，通话中/呼出时挂断</summary>
+    public void HangUp() => Send("HANGUP");
+    public void Dial(string number)
+    {
+        var n = new string(number.Where(c => "0123456789+*#".Contains(c)).ToArray());
+        if (n.Length is > 0 and < 32) Send($"DIAL {n}");
+    }
+    public void Redial() => Send("REDIAL");
+    public void SetAudioToPC(bool on) => Send(on ? "AUDIO PC" : "AUDIO PHONE");
+    public void ConnectPhone(string? id = null) => Send(id is null ? "HFP CONNECT" : $"HFP CONNECT {id}");
+    /// <summary>删除一台手机的通话配对</summary>
+    public void ForgetPhone(string id)
+    {
+        if (System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")) Send($"UNPAIR_BT {id}");
     }
 
     private IReadOnlyList<PairedIphone> _iphones = [];
@@ -469,7 +500,7 @@ public sealed partial class Esp32Manager : ObservableObject
                     _linkPort = port;
                 }
                 Thread.Sleep(300);
-                port.Write(Encoding.ASCII.GetBytes("HB?\nSTATE?\nBONDS?\n"));
+                port.Write(Encoding.ASCII.GetBytes("HB?\nSTATE?\nBONDS?\nPHONES?\n"));
                 announced = "";
                 ui(() => { _linkError = ""; Raise(nameof(LinkText)); });
                 var splitter = new LineSplitter();
@@ -523,6 +554,19 @@ public sealed partial class Esp32Manager : ObservableObject
                 break;
             case Esp32Event.Bonds b:
                 Iphones = b.List;
+                break;
+            case Esp32Event.Hfp h:
+                Hfp = h.Link;
+                break;
+            case Esp32Event.Call c:
+                Call = c.Info;
+                if (!c.Info.IsIdle) PairCode = null;
+                break;
+            case Esp32Event.Phones ph:
+                Phones = ph.List;
+                break;
+            case Esp32Event.PairCode pc:
+                PairCode = pc.Code;
                 break;
             case Esp32Event.State s:
                 if (s.Link.Ready) _iphoneProblem = "";

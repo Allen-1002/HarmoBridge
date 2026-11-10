@@ -59,15 +59,16 @@ public partial class Esp32Panel : UserControl
         if (esp.Selected is not null && esp.Link is null && esp.NotBusy) await esp.CheckFirmwareAsync();
     }
 
+    private static void Mark(TextBlock t, bool ok)
+    {
+        t.Text = ok ? "✓" : "○";
+        if (ok) t.Foreground = Ok;
+        else t.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorSecondaryBrush");
+    }
+
     private void Refresh()
     {
         if (Esp is not { } esp) return;
-        static void Mark(TextBlock t, bool ok)
-        {
-            t.Text = ok ? "✓" : "○";
-            if (ok) t.Foreground = Ok;
-            else t.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorSecondaryBrush");
-        }
 
         // 板子
         Mark(BoardMark, esp.Selected is not null);
@@ -102,6 +103,54 @@ public partial class Esp32Panel : UserControl
         }
 
         BackupInfo.Text = esp.HasBackups ? esp.BackupText : "还没有备份（第一次刷写时自动备份）";
+        RefreshCall(esp);
+    }
+
+    private void RefreshCall(Esp32Manager esp)
+    {
+        Mark(CallMark, esp.Hfp is { Connected: true });
+        var supported = esp.FirmwareSupportsCalls;
+        var h = esp.Hfp;
+        CallText.Text = !supported ? "需要固件 1.3.0 或更新：在上面的“固件”一行更新后即可使用通话。"
+            : h is null ? "等待 ESP32…"
+            : h.Connected ? $"已连接 {(h.Name.Length == 0 ? "手机" : h.Name)}{(h.Operator.Length == 0 ? "" : " · " + h.Operator)}"
+            : h.State == "connecting" ? "正在连接手机…"
+            : esp.Phones.Count == 0 ? "还没有配对手机" : "手机未连接（ESP32 会自动重连）";
+        PairCodeText.Text = esp.PairCode is { } code ? $"手机上显示的配对码应为 {code}，一致时在手机上点“配对”。" : "";
+        PairCodeText.Visibility = esp.PairCode is null ? Visibility.Collapsed : Visibility.Visible;
+        var connected = supported && h is { Connected: true };
+        var c = esp.Call;
+        CallActive.Visibility = connected && !c.IsIdle ? Visibility.Visible : Visibility.Collapsed;
+        CallLabel.Text = $"{c.Label} {c.Number}";
+        AnswerButton.Visibility = c.State == "incoming" ? Visibility.Visible : Visibility.Collapsed;
+        HangUpButton.Content = c.State == "incoming" ? "拒接" : "挂断";
+        DialRow.Visibility = connected && c.IsIdle ? Visibility.Visible : Visibility.Collapsed;
+        PhoneList.ItemsSource = supported
+            ? esp.Phones.Select(p => new { p.Id, Name = p.DisplayName, Status = p.Connected ? " 已连接" : " 未连接", CanConnect = !p.Connected }).ToList()
+            : null;
+        PairPhoneRow.Visibility = supported ? Visibility.Visible : Visibility.Collapsed;
+        PairPhoneButton.Content = esp.Phones.Count == 0 ? "配对手机" : "配对新手机";
+    }
+
+    private void OnAnswer(object sender, RoutedEventArgs e) => Esp?.Answer();
+    private void OnHangUp(object sender, RoutedEventArgs e) => Esp?.HangUp();
+    private void OnDial(object sender, RoutedEventArgs e) => Esp?.Dial(DialBox.Text);
+    private void OnRedial(object sender, RoutedEventArgs e) => Esp?.Redial();
+    private void OnDialKey(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) Esp?.Dial(DialBox.Text);
+    }
+    private void OnPairPhone(object sender, RoutedEventArgs e) => Esp?.PairNewIphone();
+    private void OnConnectPhone(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string id }) Esp?.ConnectPhone(id);
+    }
+    private void OnForgetPhone(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string id } &&
+            MessageBox.Show("删除这台手机的通话配对？也请在手机的蓝牙设置里忽略 NotiBridge。", "删除手机",
+                MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK)
+            Esp?.ForgetPhone(id);
     }
 
     private void OnScan(object sender, RoutedEventArgs e) => Detect();

@@ -602,6 +602,7 @@ public sealed class AppModel : ObservableObject
 
     private const string IphoneDeviceId = "iphone";
     private string _lastIphoneBle = "";
+    private string _lastCallState = "idle";
 
     private void HandleEsp32(Esp32Event e)
     {
@@ -630,6 +631,17 @@ public sealed class AppModel : ObservableObject
                 var src = IphoneSource(r.Peer);
                 _notifier.Remove(src, [id]);
                 _deduper.Remove(src + "|" + id);
+                break;
+            case Esp32Event.Call { Info: var c } when c.State != _lastCallState:
+                if (c.State == "incoming")
+                {
+                    var who = c.Number.Length == 0 ? "未知号码" : c.Number;
+                    _notifier.ShowLocal("来电", $"{who}（在 NotiBridge 的 ESP32 页接听或拒接）");
+                    Log($"来电 {who}（经 ESP32）");
+                }
+                else if (c.State == "active") Log("通话已接通");
+                else if (c.IsIdle && _lastCallState != "idle") Log("通话结束");
+                _lastCallState = c.State;
                 break;
             case Esp32Event.State s when s.Link.Ble != _lastIphoneBle:
                 if (s.Link.Ready) Log("iPhone 已通过 ESP32 连接");

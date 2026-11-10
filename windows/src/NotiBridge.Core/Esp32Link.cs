@@ -19,6 +19,19 @@ public abstract record Esp32Event
     public sealed record Removed(uint Uid, string Peer = "") : Esp32Event;
     public sealed record Acted(uint Uid, int Action) : Esp32Event;
     public sealed record Error(string Code, string Message) : Esp32Event;
+    /// <summary>免提（HFP）连接状态</summary>
+    public sealed record Hfp(HfpLink Link) : Esp32Event;
+    /// <summary>通话状态</summary>
+    public sealed record Call(PhoneCall Info) : Esp32Event;
+    /// <summary>ESP32 上配对过的手机（经典蓝牙，用于通话）</summary>
+    public sealed record Phones(IReadOnlyList<PairedPhone> List) : Esp32Event
+    {
+        public bool Equals(Phones? other) => other is not null && List.SequenceEqual(other.List);
+        public override int GetHashCode() => List.Count;
+    }
+    /// <summary>手机蓝牙配对时显示的 6 位数字</summary>
+    public sealed record PairCode(string Code) : Esp32Event;
+    public sealed record CallWaiting(string Number) : Esp32Event;
 }
 
 public sealed record Esp32LinkState(string Ble, string Peer, int Bonds, bool Pairing)
@@ -32,6 +45,34 @@ public sealed record Esp32LinkState(string Ble, string Peer, int Bonds, bool Pai
         "advertising" => Bonds > 0 ? "等待 iPhone 连接" : "等待 iPhone 配对",
         _ => "蓝牙未就绪",
     };
+}
+
+/// <summary>免提连接。State：disconnected / connecting / connected / disconnecting；Audio：off / connecting / cvsd / msbc。</summary>
+public sealed record HfpLink(string State, string Peer, string Name, string Audio, bool AudioToPC, int Battery, int Signal,
+    string Operator, bool Discoverable)
+{
+    public bool Connected => State == "connected";
+}
+
+/// <summary>通话。State：idle / incoming / dialing / alerting / active。</summary>
+public sealed record PhoneCall(string State, string Number, int Held)
+{
+    public static readonly PhoneCall Idle = new("idle", "", 0);
+    public bool IsIdle => State == "idle";
+    public string Label => State switch
+    {
+        "incoming" => "来电",
+        "dialing" => "正在呼叫",
+        "alerting" => "对方振铃中",
+        "active" => Held > 0 ? "通话保持中" : "通话中",
+        _ => "空闲",
+    };
+}
+
+/// <summary>配对过的手机（经典蓝牙）</summary>
+public sealed record PairedPhone(string Id, string Name, bool Connected)
+{
+    public string DisplayName => Name.Length == 0 ? "手机" : Name;
 }
 
 /// <summary>ESP32 上配对过的一台 iPhone。Id 是蓝牙地址（固定不变），Name 是 iPhone 自己的设备名（第一次连上之前可能为空）。</summary>
@@ -99,6 +140,18 @@ public static class Esp32LinkParser
                 "removed" => U("uid") is uint r ? new Esp32Event.Removed(r, S("peer")) : null,
                 "acted" => U("uid") is uint a ? new Esp32Event.Acted(a, I("action")) : null,
                 "err" => new Esp32Event.Error(S("code"), S("msg")),
+                "hfp" => new Esp32Event.Hfp(new HfpLink(S("state"), S("peer"), S("name"), S("audio"), S("audioTo") == "pc",
+                    o.TryGetProperty("battery", out var bt) && bt.TryGetInt32(out var b1) ? b1 : -1,
+                    o.TryGetProperty("signal", out var sg) && sg.TryGetInt32(out var s1) ? s1 : -1,
+                    S("operator"), Bool(o, "discoverable"))),
+                "call" => new Esp32Event.Call(new PhoneCall(S("state").Length == 0 ? "idle" : S("state"), S("number"), I("held"))),
+                "phones" => new Esp32Event.Phones(o.TryGetProperty("list", out var pl) && pl.ValueKind == JsonValueKind.Array
+                    ? pl.EnumerateArray().Where(b => b.ValueKind == JsonValueKind.Object)
+                        .Select(b => new PairedPhone(Str(b, "addr"), Str(b, "name"), Bool(b, "connected")))
+                        .Where(b => b.Id.Length > 0).ToList()
+                    : []),
+                "pair_code" => new Esp32Event.PairCode(S("code")),
+                "call_waiting" => new Esp32Event.CallWaiting(S("number")),
                 _ => null,
             };
         }

@@ -222,6 +222,18 @@ public class EspTests
     }
 
     [Fact]
+    public void ParseCallEvents()
+    {
+        Assert.Equal(new Esp32Event.Hfp(new HfpLink("connected", "1c:8f:57:16:d3:00", "Allen 的 iPhone", "msbc", true, 4, 5, "中国移动", false)),
+            Esp32LinkParser.Parse("""@{"t":"hfp","state":"connected","peer":"1c:8f:57:16:d3:00","name":"Allen 的 iPhone","audio":"msbc","audioTo":"pc","battery":4,"signal":5,"operator":"中国移动","discoverable":false}"""));
+        Assert.Equal(new Esp32Event.Call(new PhoneCall("incoming", "+8613800000000", 0)),
+            Esp32LinkParser.Parse("""@{"t":"call","state":"incoming","number":"+8613800000000","call":0,"setup":1,"held":0}"""));
+        var phones = Assert.IsType<Esp32Event.Phones>(Esp32LinkParser.Parse("""@{"t":"phones","list":[{"addr":"aa:bb:cc:dd:ee:ff","name":"","connected":false}]}""")).List;
+        Assert.Equal("手机", Assert.Single(phones).DisplayName);
+        Assert.Equal(new Esp32Event.PairCode("012345"), Esp32LinkParser.Parse("""@{"t":"pair_code","code":"012345"}"""));
+    }
+
+    [Fact]
     public void ParseBonds()
     {
         var e = Esp32LinkParser.Parse("""@{"t":"bonds","list":[{"addr":"51:a8:27:cd:73:e0","name":"Allen 的 iPhone","connected":true,"ready":true},{"addr":"11:22:33:44:55:66","name":"","connected":false,"ready":false},{"name":"x"}]}""");
