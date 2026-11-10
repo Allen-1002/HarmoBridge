@@ -10,14 +10,14 @@ namespace NotiBridge.Windows;
 
 public partial class MainWindow : Window
 {
-    private static readonly string[] ObTitles =
-        ["欢迎使用 NotiBridge", "选择使用方式", "允许显示通知", "允许局域网连接", "连接 ESP32 模块", "添加第一台设备", "设置完成"];
     // 侧边栏页面序号
     private const int NavOverview = 0, NavDevices = 1, NavEsp = 2, NavRecords = 3;
     private readonly AppModel _model;
     private FrameworkElement[] _pages = [];
     private FrameworkElement[] _obPages = [];
     private int _obIndex;
+    /// <summary>引导里“你用什么手机”：iphone / android / both，没选时为空</summary>
+    private string _phones = "";
 
     public MainWindow(AppModel model)
     {
@@ -25,7 +25,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = model;
         _pages = [Page0, Page2, PageEsp, Page1, Page3, Page5];
-        _obPages = [Ob0, ObMode, Ob1, Ob2, ObEsp, Ob4, Ob5];
+        _obPages = [Ob0, ObPhones, ObCalls, Ob1, Ob2, ObEsp, Ob4, Ob5];
         _iphoneTimer.Tick += (_, _) => RefreshIphoneFlow();
         VersionText.Text = $"NotiBridge for Windows {Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)} · 与 Mac 版、手机端使用同一套加密协议";
 
@@ -296,6 +296,8 @@ public partial class MainWindow : Window
         Main.Visibility = Visibility.Collapsed;
         Onboarding.Visibility = Visibility.Visible;
         _obIndex = 0;
+        _phones = "";
+        PhonesIphone.IsChecked = PhonesAndroid.IsChecked = PhonesBoth.IsChecked = false;
         // 引导页借用“设备与配对”里的添加设备面板
         AddDeviceHost.Content = null;
         ObPairingHost.Content = AddDevicePanel;
@@ -311,18 +313,45 @@ public partial class MainWindow : Window
         ResetAddDevice();
     }
 
+    /// <summary>
+    /// 当前要走的引导步骤：欢迎 → 你用什么手机 → [只有安卓 / 鸿蒙：要不要通话] → 通知 → 网络
+    /// → [需要 ESP32：检测与刷写] → 添加第一台设备 → 完成。有 iPhone 或要通话 → ESP32 模式，否则纯软件。
+    /// </summary>
+    private List<FrameworkElement> ObFlow() =>
+        _obPages.Where(p => (p != ObCalls || _phones == "android") && (p != ObEsp || _model.Esp32.UseEsp32)).ToList();
+
+    private FrameworkElement ObCurrent => _obPages[_obIndex];
+
+    private static string ObTitleFor(FrameworkElement p, MainWindow w) =>
+        p == w.Ob0 ? "欢迎使用 NotiBridge" : p == w.ObPhones ? "你用什么手机？" : p == w.ObCalls ? "要在电脑上接打电话吗？"
+        : p == w.Ob1 ? "允许显示通知" : p == w.Ob2 ? "允许局域网连接" : p == w.ObEsp ? "连接 ESP32 模块"
+        : p == w.Ob4 ? "添加第一台设备" : "设置完成";
+
     private void UpdateOnboarding()
     {
-        for (var i = 0; i < _obPages.Length; i++)
-            _obPages[i].Visibility = i == _obIndex ? Visibility.Visible : Visibility.Collapsed;
-        ObTitle.Text = ObTitles[_obIndex];
-        ObStep.Text = $"第 {_obIndex + 1} 步，共 {_obPages.Length} 步";
-        ObBack.Visibility = _obIndex == 0 ? Visibility.Hidden : Visibility.Visible;
-        var page = _obPages[_obIndex];
+        var flow = ObFlow();
+        var page = ObCurrent;
+        foreach (var p in _obPages) p.Visibility = p == page ? Visibility.Visible : Visibility.Collapsed;
+        ObTitle.Text = ObTitleFor(page, this);
+        ObStep.Text = $"第 {flow.IndexOf(page) + 1} 步，共 {flow.Count} 步";
+        ObBack.Visibility = page == Ob0 ? Visibility.Hidden : Visibility.Visible;
         UpdateObNext();
         if (page == Ob1) _model.SendLocalTestNotification(); // 发一条通知，Windows 会登记本程序的通知权限
-        if (page == Ob4) StartAddFlow(_model.Esp32.UseEsp32 ? AddKind.Iphone : AddKind.Phone);
+        if (page == Ob4)
+        {
+            if (_phones == "iphone") StartAddFlow(AddKind.Iphone);
+            else if (_phones == "android") StartAddFlow(AddKind.Phone);
+            else ResetAddDevice(); // 两种都有：先选设备类型
+        }
         else ResetAddDevice();
+    }
+
+    private void OnPhonesChanged(object sender, RoutedEventArgs e)
+    {
+        _phones = sender == PhonesIphone ? "iphone" : sender == PhonesAndroid ? "android" : "both";
+        // 有 iPhone 就必须用 ESP32；只有安卓 / 鸿蒙时由下一步“要不要通话”决定（默认不需要）
+        _model.Esp32.UseEsp32 = _phones != "android";
+        UpdateOnboarding();
     }
 
     /// <summary>
@@ -331,16 +360,17 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateObNext()
     {
-        var page = _obPages[_obIndex];
-        var skip = page == Ob4 && !_model.HasDevices;
-        ObNext.Content = _obIndex == 0 ? "开始设置" : _obIndex == _obPages.Length - 1 ? "完成" : skip ? "稍后添加" : "下一步";
+        var page = ObCurrent;
+        var skip = (page == Ob4 && !_model.HasDevices) || (page == ObEsp && !_model.Esp32.FirmwareOk);
+        ObNext.Content = page == Ob0 ? "开始设置" : page == Ob5 ? "完成" : page == Ob4 && skip ? "稍后添加" : skip ? "跳过" : "下一步";
+        ObNext.IsEnabled = page != ObPhones || _phones.Length > 0;
         if (skip) ObNext.ClearValue(StyleProperty);
         else ObNext.SetResourceReference(StyleProperty, "AccentButtonStyle");
     }
 
     private void OnObNext(object sender, RoutedEventArgs e)
     {
-        if (_obIndex == _obPages.Length - 1)
+        if (ObCurrent == Ob5)
         {
             _model.Onboarded = true;
             _model.Log("首次启动引导已完成");
@@ -348,16 +378,17 @@ public partial class MainWindow : Window
             Go(NavOverview);
             return;
         }
-        _obIndex++;
-        if (_obPages[_obIndex] == ObEsp && !_model.Esp32.UseEsp32) _obIndex++; // 纯软件跳过 ESP32 步骤
+        var flow = ObFlow();
+        _obIndex = Array.IndexOf(_obPages, flow[flow.IndexOf(ObCurrent) + 1]);
         UpdateOnboarding();
     }
 
     private void OnObBack(object sender, RoutedEventArgs e)
     {
-        if (_obIndex == 0) return;
-        _obIndex--;
-        if (_obPages[_obIndex] == ObEsp && !_model.Esp32.UseEsp32) _obIndex--;
+        var flow = ObFlow();
+        var i = flow.IndexOf(ObCurrent);
+        if (i <= 0) return;
+        _obIndex = Array.IndexOf(_obPages, flow[i - 1]);
         UpdateOnboarding();
     }
 

@@ -352,7 +352,7 @@ struct AddDeviceFlow: View {
         } else if iphoneDeadline == nil {
             Button("开始配对 iPhone") { startIphonePairingIfReady() }.hbGlassButton(prominent: true)
         } else {
-            StepText(n: 1, text: "在 iPhone 上打开「设置 › 蓝牙」，在“其他设备”里点“NotiBridge”，然后点“配对”。")
+            StepText(n: 1, text: "在 iPhone 上打开「设置 › 蓝牙」，在“其他设备”里点“NotiBridge 通知”，然后点“配对”。")
             StepText(n: 2, text: "弹出“共享系统通知”时选择“允许”（错过了可以点 NotiBridge 右边的 ⓘ 打开“共享系统通知”）。")
             if let p = newIphone {
                 Label("已配对“\(iphoneName(p))”，等待 iPhone 允许共享通知…", systemImage: "hourglass")

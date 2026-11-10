@@ -96,21 +96,47 @@
                         </Border>
                     </StackPanel>
                     <!-- 使用方式 -->
-                    <StackPanel x:Name="ObMode" Visibility="Collapsed">
+                    <!-- 你用什么手机 -->
+                    <StackPanel x:Name="ObPhones" Visibility="Collapsed">
                         <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
-                                   Text="之后可以在 设置 里更改。手机上的 NotiBridge 不需要做选择。" />
+                                   Text="手机上的 NotiBridge 不需要做选择。之后可以在 设置 › 使用方式 里更改。" />
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <RadioButton GroupName="UseMode" IsChecked="{Binding Esp32.UseSoftware}" FontWeight="SemiBold" Content="纯软件（推荐）" />
-                                <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13"
-                                           Text="同步安卓、鸿蒙手机的通知，验证码自动复制。不需要额外硬件。" />
+                                <RadioButton x:Name="PhonesIphone" GroupName="Phones" FontWeight="SemiBold" Content="iPhone" Checked="OnPhonesChanged" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13" TextWrapping="Wrap"
+                                           Text="iPhone 不能装通知转发 App，需要一块 ESP32 模块：iPhone 在蓝牙设置里和它配对，通知经 USB 转到这台电脑。" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <RadioButton GroupName="UseMode" IsChecked="{Binding Esp32.UseEsp32}" FontWeight="SemiBold" Content="ESP32 模式" />
-                                <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13"
-                                           Text="在纯软件的基础上，增加 iPhone 通知（经 ESP32 模块），以及所有手机在电脑上接打电话（即将支持）。需要一块插在电脑 USB 上的 ESP32 模块。" />
+                                <RadioButton x:Name="PhonesAndroid" GroupName="Phones" FontWeight="SemiBold" Content="安卓 / 鸿蒙手机" Checked="OnPhonesChanged" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13" TextWrapping="Wrap"
+                                           Text="在手机上安装 NotiBridge App，同一 Wi-Fi 下同步通知，不需要额外硬件。" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <RadioButton x:Name="PhonesBoth" GroupName="Phones" FontWeight="SemiBold" Content="两种都有" Checked="OnPhonesChanged" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13" TextWrapping="Wrap"
+                                           Text="安卓 / 鸿蒙手机走局域网，iPhone 走 ESP32 模块，两边的通知都会同步到这台电脑。" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                    <!-- 要不要通话（只有安卓 / 鸿蒙时） -->
+                    <StackPanel x:Name="ObCalls" Visibility="Collapsed">
+                        <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
+                                   Text="通知同步不需要额外硬件。接打电话需要一块 ESP32 模块，手机在蓝牙设置里和“NotiBridge 通话”配对，电脑就像一个蓝牙耳机。通话功能即将支持。" />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <RadioButton GroupName="Calls" IsChecked="{Binding Esp32.UseSoftware}" FontWeight="SemiBold" Content="不需要，只同步通知（推荐）" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13" Text="纯软件，不需要额外硬件。" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <RadioButton GroupName="Calls" IsChecked="{Binding Esp32.UseEsp32}" FontWeight="SemiBold" Content="需要，使用 ESP32 模块" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="28,2,0,0" FontSize="13" TextWrapping="Wrap"
+                                           Text="后面会检测 ESP32 并刷写固件，也可以先跳过，之后在“ESP32 模块”里完成。" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -403,7 +429,7 @@
                                         <TextBlock x:Name="IphoneFlowTitle" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap" />
                                         <TextBlock x:Name="IphoneFlowText" Style="{StaticResource Hint}" TextWrapping="Wrap" FontSize="13" Margin="0,4,0,0" />
                                         <StackPanel x:Name="IphoneFlowSteps" Visibility="Collapsed" Margin="0,4,0,0">
-                                            <TextBlock TextWrapping="Wrap" Text="① 在 iPhone 上打开「设置 › 蓝牙」，在“其他设备”里点“NotiBridge”，然后点“配对”。" />
+                                            <TextBlock TextWrapping="Wrap" Text="① 在 iPhone 上打开「设置 › 蓝牙」，在“其他设备”里点“NotiBridge 通知”，然后点“配对”。" />
                                             <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" Text="② 弹出“共享系统通知”时选择“允许”（错过了可以点 NotiBridge 右边的 ⓘ 打开“共享系统通知”）。" />
                                         </StackPanel>
                                         <Button x:Name="IphoneFlowAction" Click="OnIphoneAction" HorizontalAlignment="Left" Padding="16,8" Margin="0,12,0,0"
