@@ -422,6 +422,8 @@ final class Esp32Manager: ObservableObject {
         send("REDIAL")
     }
     func sendDtmf(_ c: Character) { if "0123456789*#".contains(c) { send("DTMF \(c)") } }
+    /// 静音电脑麦克风（发送静音）
+    func setMuted(_ on: Bool) { callAudio?.muted = on }
     /// 通话声音走电脑还是留在手机上
     func setAudioToPC(_ on: Bool) { send(on ? "AUDIO PC" : "AUDIO PHONE") }
     func connectPhone(_ id: String? = nil) { send(id.map { "HFP CONNECT \($0)" } ?? "HFP CONNECT") }

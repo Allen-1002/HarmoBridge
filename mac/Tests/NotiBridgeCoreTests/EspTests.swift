@@ -633,3 +633,20 @@ final class RealBoardStressTests: XCTestCase {
         port.close()
     }
 }
+
+final class PhoneNumbersTests: XCTestCase {
+    func testNormalizeAndMatch() {
+        XCTAssertEqual(PhoneNumbers.key("+86 138-0013-8000"), "13800138000")
+        XCTAssertEqual(PhoneNumbers.key("008613800138000"), "13800138000")
+        XCTAssertEqual(PhoneNumbers.key("(010) 6552 9988"), "01065529988")
+        XCTAssertEqual(PhoneNumbers.key("10086"), "10086")
+        let idx = ContactIndex([ContactEntry(name: "张三", number: "+86 138 0013 8000"),
+                                ContactEntry(name: "客服", number: "10086")])
+        XCTAssertEqual(idx.name(forNumber: "13800138000"), "张三")
+        XCTAssertEqual(idx.name(forNumber: "10086"), "客服")
+        XCTAssertNil(idx.name(forNumber: "13900000000"))
+        XCTAssertEqual(idx.search("张").map(\.name), ["张三"])
+        XCTAssertEqual(idx.search("0013").map(\.name), ["张三"])
+        XCTAssertEqual(idx.search(""), [])
+    }
+}

@@ -16,6 +16,8 @@ final class CallAudio {
     private let frameSamples: Int
     private let format: AVAudioFormat
     var onLog: ((String) -> Void)?
+    /// 静音：照常发帧（保持节奏），内容为静音
+    var muted = false
 
     init(sampleRate: Int, sendUp: @escaping ([UInt8]) -> Void) {
         self.sampleRate = sampleRate
@@ -164,8 +166,9 @@ final class CallAudio {
             return buffer
         }
         guard err == nil, let ch = out.floatChannelData?[0] else { return }
+        let mute = muted
         for i in 0..<Int(out.frameLength) {
-            let v = max(-1, min(1, ch[i]))
+            let v = mute ? 0 : max(-1, min(1, ch[i]))
             pendingUp.append(Int16(v * 32767))
         }
         // 系统一次给的麦克风数据可能有 100 ms，一口气发出去会让 ESP32 的串口接收溢出：

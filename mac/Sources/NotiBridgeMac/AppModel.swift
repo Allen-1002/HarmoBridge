@@ -62,6 +62,28 @@ final class AppModel: ObservableObject {
     private var callBridge: CallBridge?
     /// ESP32 通话模块（使用方式、硬件检测、固件）
     let esp32 = Esp32Manager()
+    /// 电脑通讯录（来电显示名字、拨号搜索）
+    let contacts = ContactsDirectory()
+    /// 当前通话（来电/通话小窗和横条共用）
+    lazy var callSession = CallSession(esp: esp32, contacts: contacts)
+    private var callPanel: CallPanelController?
+    /// 通话期间不弹通知（照常记录、验证码照常复制），挂断后汇总
+    @Published var quietDuringCalls: Bool = UserDefaults.standard.object(forKey: "quietDuringCalls") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(quietDuringCalls, forKey: "quietDuringCalls") }
+    }
+    private var heldDuringCall = 0
+    /// 最近通话的号码（新的在前，最多 20 个），拨号时可以直接选
+    @Published var recentCalls: [String] = UserDefaults.standard.stringArray(forKey: "recentCalls") ?? [] {
+        didSet { UserDefaults.standard.set(recentCalls, forKey: "recentCalls") }
+    }
+    private func rememberCall(_ number: String) {
+        guard !number.isEmpty else { return }
+        recentCalls.removeAll { PhoneNumbers.key($0) == PhoneNumbers.key(number) }
+        recentCalls.insert(number, at: 0)
+        if recentCalls.count > 20 { recentCalls.removeLast(recentCalls.count - 20) }
+    }
+    private var inCall: Bool { !esp32.call.isIdle }
+    private var holdPopups: Bool { quietDuringCalls && inCall }
     private var esp32Changes: AnyCancellable?
     /// 自动更新（GitHub Releases）
     let updater = Updater()
@@ -115,6 +137,8 @@ final class AppModel: ObservableObject {
         updater.start()
         esp32.onLog = { [weak self] s in self?.log(s) }
         esp32.onEvent = { [weak self] e in self?.handleEsp32(e) }
+        callPanel = CallPanelController(session: callSession)
+        if esp32.mode == .esp32 { contacts.requestAccess() }
         esp32.startLinkIfPossible()
         loginItemEnabled = SMAppService.mainApp.status == .enabled
         // 首次使用由引导页统一申请权限；完成引导后启动时只确认通知权限
@@ -592,6 +616,8 @@ final class AppModel: ObservableObject {
         case let .notification(n):
             // 连接时 iPhone 会补发通知中心里已有的通知：不弹出
             if n.preExisting { return }
+            // iPhone 自己的“来电”通知：来电小窗已经在提醒了，不再重复弹
+            if n.isIncomingCall && esp32.hfp?.connected == true { return }
             let m = n.mirrored()
             if !paused, !filter.blacklist.contains(m.bundleName), copyOtp {
                 let code = OtpExtractor.extract(title: m.title, text: m.text)
@@ -628,16 +654,20 @@ final class AppModel: ObservableObject {
     private func handleCall(_ c: PhoneCall) {
         defer { lastCallState = c.state }
         guard c.state != lastCallState else { return }
+        // 来电/通话由小窗提醒（CallPanelController），不往通知中心发
         switch c.state {
         case "incoming":
-            notifier.showCall(number: c.number.isEmpty ? "未知号码" : c.number)
             log("来电 \(c.number.isEmpty ? "未知号码" : c.number)（经 ESP32）")
+            rememberCall(c.number)
         case "active":
-            notifier.clearCall()
             log("通话已接通")
+            rememberCall(c.number)
         case "idle":
-            notifier.clearCall()
             if lastCallState != "idle" { log("通话结束") }
+            if heldDuringCall > 0 {
+                notifier.showLocal(title: "通话期间收到 \(heldDuringCall) 条通知", body: "可以在 NotiBridge 的通知记录里查看。")
+                heldDuringCall = 0
+            }
         default:
             break
         }
@@ -662,7 +692,7 @@ final class AppModel: ObservableObject {
             case .duplicate:
                 result = "duplicate"
             case .new, .updated:
-                notifier.show(n, source: sourceLabel(deviceId))
+                if holdPopups { heldDuringCall += 1 } else { notifier.show(n, source: sourceLabel(deviceId)) }
                 result = "shown"
             }
         }
@@ -729,7 +759,7 @@ final class AppModel: ObservableObject {
         let change = pb.changeCount
         lastOtp = (o.code, o.appName, Date())
         todayOtp += 1
-        notifier.showOtp(code: o.code, app: o.appName, source: sourceLabel(deviceId))
+        if holdPopups { heldDuringCall += 1 } else { notifier.showOtp(code: o.code, app: o.appName, source: sourceLabel(deviceId)) }
         log("验证码已复制到剪贴板（来自 \(o.appName)，\(o.code.count) 位）")
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
             if pb.changeCount == change {

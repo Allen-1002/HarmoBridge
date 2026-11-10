@@ -206,7 +206,7 @@ struct StatusMenu: View {
             VStack(alignment: .leading, spacing: 12) {
                 header
                 hero
-                CallControls()
+                if model.esp32.mode == .esp32 { CallBanner(session: model.callSession) } else { CallControls() }
                 otpCard
                 if let pin = model.pairingPin {
                     PairingPanel(pin: pin, sas: model.pairingSas)
@@ -465,7 +465,11 @@ struct MainWindow: View {
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } detail: {
-            Group {
+            VStack(spacing: 0) {
+                if model.esp32.mode == .esp32 && !model.callSession.isIdle {
+                    CallBanner(session: model.callSession).padding([.horizontal, .top], 16)
+                }
+                Group {
                 switch selection ?? .overview {
                 case .overview: OverviewView(selection: $selection)
                 case .records: RecordsView()
@@ -473,6 +477,7 @@ struct MainWindow: View {
                 case .esp32: Esp32Page(esp: model.esp32)
                 case .filters: FilterTab()
                 case .settings: SettingsView()
+                }
                 }
             }
             .navigationTitle((selection ?? .overview).rawValue)
@@ -725,6 +730,9 @@ struct SettingsView: View {
                 Toggle("验证码自动复制到剪贴板", isOn: $model.copyOtp)
                 Toggle("不转发银行、支付类通知", isOn: $model.filter.blockSensitive)
                 Toggle("在列表中显示通知内容", isOn: $model.showContentInList)
+                if model.esp32.mode == .esp32 {
+                    Toggle("通话期间不弹出通知（挂断后汇总提示）", isOn: $model.quietDuringCalls)
+                }
             } header: {
                 Text("同步")
             } footer: {

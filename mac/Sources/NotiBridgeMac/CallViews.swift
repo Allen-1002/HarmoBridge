@@ -4,6 +4,7 @@ import SwiftUI
 /// ESP32 页“通话”一行：免提连接、配对手机、当前通话（接听/挂断）、拨号。
 struct CallRow: View {
     @ObservedObject var esp: Esp32Manager
+    @EnvironmentObject var model: AppModel
     @State private var number = ""
     @State private var confirmForget: PairedPhone?
 
@@ -72,11 +73,8 @@ struct CallRow: View {
                 }
             }
         } else {
-            HStack {
-                TextField("拨打号码", text: $number).frame(maxWidth: 200).onSubmit { esp.dial(number) }
-                Button("拨打") { esp.dial(number) }.disabled(number.filter(\.isNumber).isEmpty)
-                Button("重拨") { esp.redial() }
-            }
+            DialBox(number: $number, contacts: model.contacts, recent: model.recentCalls) { esp.dial($0) }
+            Button("重拨") { esp.redial() }.font(.caption)
         }
     }
 
@@ -101,4 +99,61 @@ struct CallRow: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
+}
+
+/// 拨号框：输入名字或号码，下面列出匹配的联系人；空着时列出最近通话
+struct DialBox: View {
+    @Binding var number: String
+    @ObservedObject var contacts: ContactsDirectory
+    let recent: [String]
+    let dial: (String) -> Void
+
+    private var suggestions: [ContactEntry] {
+        let q = number.trimmingCharacters(in: .whitespaces)
+        if q.isEmpty {
+            return recent.prefix(5).map { ContactEntry(name: contacts.name(forNumber: $0) ?? "", number: $0) }
+        }
+        return contacts.search(q)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                TextField("输入名字或号码", text: $number)
+                    .frame(maxWidth: 220)
+                    .onSubmit { submit() }
+                Button("拨打") { submit() }.disabled(target == nil)
+            }
+            ForEach(suggestions) { e in
+                Button {
+                    number = e.number
+                    dial(e.number)
+                } label: {
+                    HStack {
+                        Image(systemName: "phone")
+                        Text(e.name.isEmpty ? e.number : e.name)
+                        if !e.name.isEmpty { Text(e.number).foregroundStyle(.secondary) }
+                    }
+                    .font(.callout)
+                }
+                .buttonStyle(.borderless)
+            }
+            if !contacts.authorized {
+                Text(contacts.status == .denied ? "没有通讯录权限：在「系统设置 › 隐私与安全性 › 通讯录」里允许 NotiBridge 后，来电和拨号可以显示联系人名字。"
+                                                : "允许访问通讯录后，来电和拨号可以显示联系人名字。")
+                    .font(.caption).foregroundStyle(.secondary)
+                if contacts.status == .notDetermined { Button("允许访问通讯录") { contacts.requestAccess() }.font(.caption) }
+            }
+        }
+    }
+
+    /// 输入的是号码就拨号码；是名字且只匹配到一个联系人就拨他
+    private var target: String? {
+        let digits = number.filter { "0123456789+*#".contains($0) }
+        if !digits.isEmpty && digits.count == number.filter({ !$0.isWhitespace && $0 != "-" }).count { return digits }
+        let m = contacts.search(number)
+        return m.count == 1 ? m[0].number : nil
+    }
+
+    private func submit() { if let t = target { dial(t) } }
 }
