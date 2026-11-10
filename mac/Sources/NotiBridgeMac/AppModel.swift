@@ -52,6 +52,9 @@ final class AppModel: ObservableObject {
     @Published var notificationsAllowed = "未知"
     @Published var loginItemEnabled = false
     @Published var showContentInList = false
+    /// “添加设备”弹窗（主窗口里显示）
+    @Published var showAddDevice = false
+    @Published var addDeviceKind: AddDeviceKind?
     // 通话（实验）
     @Published var callState: CallState = .unavailable("未连接")
     @Published var btDevices: [BTDevice] = []
@@ -59,6 +62,28 @@ final class AppModel: ObservableObject {
     private var callBridge: CallBridge?
     /// ESP32 通话模块（使用方式、硬件检测、固件）
     let esp32 = Esp32Manager()
+    /// 电脑通讯录（来电显示名字、拨号搜索）
+    let contacts = ContactsDirectory()
+    /// 当前通话（来电/通话小窗和横条共用）
+    lazy var callSession = CallSession(esp: esp32, contacts: contacts)
+    private var callPanel: CallPanelController?
+    /// 通话期间不弹通知（照常记录、验证码照常复制），挂断后汇总
+    @Published var quietDuringCalls: Bool = UserDefaults.standard.object(forKey: "quietDuringCalls") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(quietDuringCalls, forKey: "quietDuringCalls") }
+    }
+    private var heldDuringCall = 0
+    /// 最近通话的号码（新的在前，最多 20 个），拨号时可以直接选
+    @Published var recentCalls: [String] = UserDefaults.standard.stringArray(forKey: "recentCalls") ?? [] {
+        didSet { UserDefaults.standard.set(recentCalls, forKey: "recentCalls") }
+    }
+    private func rememberCall(_ number: String) {
+        guard !number.isEmpty else { return }
+        recentCalls.removeAll { PhoneNumbers.key($0) == PhoneNumbers.key(number) }
+        recentCalls.insert(number, at: 0)
+        if recentCalls.count > 20 { recentCalls.removeLast(recentCalls.count - 20) }
+    }
+    private var inCall: Bool { !esp32.call.isIdle }
+    private var holdPopups: Bool { quietDuringCalls && inCall }
     private var esp32Changes: AnyCancellable?
     /// 自动更新（GitHub Releases）
     let updater = Updater()
@@ -110,6 +135,11 @@ final class AppModel: ObservableObject {
             self?.notifier.showLocal(title: "已更新到 \(v)", body: "NotiBridge 已自动更新并重新打开。")
         }
         updater.start()
+        esp32.onLog = { [weak self] s in self?.log(s) }
+        esp32.onEvent = { [weak self] e in self?.handleEsp32(e) }
+        callPanel = CallPanelController(session: callSession)
+        if esp32.mode == .esp32 { contacts.requestAccess() }
+        esp32.startLinkIfPossible()
         loginItemEnabled = SMAppService.mainApp.status == .enabled
         // 首次使用由引导页统一申请权限；完成引导后启动时只确认通知权限
         if onboarded {
@@ -139,7 +169,7 @@ final class AppModel: ObservableObject {
         log(Self.repairNoticeText)
         showFrontAlert(
             title: Self.repairNoticeText,
-            text: "NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下了配对过程也无法离线猜出配对码，并加了双向防重放。旧的配对已失效并已清除。\n\n请在这台电脑上点“配对新手机”，再在每台手机上（也要更新到 1.1.0）重新配对一次。")
+            text: "NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下了配对过程也无法离线猜出配对码，并加了双向防重放。旧的配对已失效并已清除。\n\n请在这台电脑上点“添加设备”，再在每台手机上（也要更新到 1.1.0）重新配对一次。")
     }
 
     /// 菜单栏应用（accessory）弹出的对话框容易被当前窗口挡住：激活应用、提到浮动层级并强制置前
@@ -182,7 +212,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    var isPhoneOnline: Bool { !onlineDevices.isEmpty }
+    /// 有手机 App 在线，或有经 ESP32 的 iPhone 已就绪
+    var isPhoneOnline: Bool { !onlineDevices.isEmpty || iphoneDevices.contains(where: \.ancsReady) }
 
     /// 最近一次与手机通信（含通知订阅扩展的按需连接）
     @Published var lastSync: Date?
@@ -190,13 +221,13 @@ final class AppModel: ObservableObject {
     var statusSymbol: String {
         if paused { return "pause.circle" }
         if isPhoneOnline { return "iphone.radiowaves.left.and.right" }
-        return pairedDevices.isEmpty ? "iphone.slash" : "iphone"
+        return hasAnyDevice ? "iphone" : "iphone.slash"
     }
 
     /// 手机 App 不在前台时，通知由系统拉起的订阅扩展按需连接转发，所以“未连接”不等于收不到通知。
     var phoneStatusText: String {
         if isPhoneOnline { return "已连接" }
-        if pairedDevices.isEmpty { return "未配对" }
+        if !hasAnyDevice { return "未配对" }
         guard let lastSync else { return "待命（有通知时自动连接）" }
         return "待命 · 最近同步 \(lastSync.formatted(date: .omitted, time: .shortened))"
     }
@@ -246,6 +277,11 @@ final class AppModel: ObservableObject {
     /// 手机显示名：自定义了名字就用自定义名字，否则用手机配对时报告的名字。
     func displayName(_ id: String) -> String {
         if let a = deviceAliases[id], !a.isEmpty { return a }
+        if id.hasPrefix(Self.iphoneDeviceId) {
+            // 经 ESP32 的 iPhone：用 ESP32 读到的 iPhone 名字
+            let addr = id.dropFirst(Self.iphoneDeviceId.count + 1)
+            return esp32.iphones.first { $0.id == addr }?.displayName ?? "iPhone"
+        }
         return pairedDevices.first { $0.id == id }?.name ?? String(id.prefix(8))
     }
 
@@ -263,7 +299,9 @@ final class AppModel: ObservableObject {
 
     /// 配对了多台手机时，通知里才标出来源手机
     func sourceLabel(_ deviceId: String) -> String? {
-        guard pairedDevices.count > 1, !deviceId.isEmpty else { return nil }
+        // 同时有局域网手机和经 ESP32 的 iPhone 时也标出来源
+        let sources = pairedDevices.count + (esp32.mode == .esp32 ? max(1, esp32.iphones.count) : 0)
+        guard sources > 1, !deviceId.isEmpty else { return nil }
         return displayName(deviceId)
     }
 
@@ -566,8 +604,78 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - 经 ESP32 收到的 iPhone 通知（ANCS）
+
+    /// 经 ESP32 的 iPhone 的来源 id："iphone:<蓝牙地址>"（旧固件没有地址时为 "iphone"）
+    static let iphoneDeviceId = "iphone"
+    private static func iphoneSource(_ peer: String) -> String { peer.isEmpty ? iphoneDeviceId : "\(iphoneDeviceId):\(peer)" }
+    private var lastIphoneBle = ""
+
+    private func handleEsp32(_ e: Esp32Event) {
+        switch e {
+        case let .notification(n):
+            // 连接时 iPhone 会补发通知中心里已有的通知：不弹出
+            if n.preExisting { return }
+            // iPhone 自己的“来电”通知：来电小窗已经在提醒了，不再重复弹
+            if n.isIncomingCall && esp32.hfp?.connected == true { return }
+            let m = n.mirrored()
+            if !paused, !filter.blacklist.contains(m.bundleName), copyOtp {
+                let code = OtpExtractor.extract(title: m.title, text: m.text)
+                if !code.isEmpty {
+                    if filter.blockSensitive && OtpExtractor.isFinance(bundleName: m.bundleName, title: m.title, text: m.text) {
+                        log("已跳过银行/支付类验证码（\(m.appName)）")
+                    } else {
+                        _ = handleOtp(OtpCode(id: m.id, bundleName: m.bundleName, appName: m.appName, code: code),
+                                      from: Self.iphoneSource(n.peer))
+                    }
+                    return
+                }
+            }
+            _ = present(m, from: Self.iphoneSource(n.peer))
+        case let .removed(uid, peer):
+            let key = scopedId(Self.iphoneSource(peer), "ios-\(uid)")
+            notifier.remove([key])
+            deduper.remove(key)
+        case let .call(c):
+            handleCall(c)
+        case let .state(s):
+            if s.ble != lastIphoneBle {
+                if s.ble == "ready" { log("iPhone 已通过 ESP32 连接") }
+                else if lastIphoneBle == "ready" { log("iPhone 已断开，ESP32 等待重新连接") }
+                lastIphoneBle = s.ble
+            }
+        default:
+            break
+        }
+    }
+
+    /// 来电时弹系统通知，接通或结束后收起
+    private var lastCallState = "idle"
+    private func handleCall(_ c: PhoneCall) {
+        defer { lastCallState = c.state }
+        guard c.state != lastCallState else { return }
+        // 来电/通话由小窗提醒（CallPanelController），不往通知中心发
+        switch c.state {
+        case "incoming":
+            log("来电 \(c.number.isEmpty ? "未知号码" : c.number)（经 ESP32）")
+            rememberCall(c.number)
+        case "active":
+            log("通话已接通")
+            rememberCall(c.number)
+        case "idle":
+            if lastCallState != "idle" { log("通话结束") }
+            if heldDuringCall > 0 {
+                notifier.showLocal(title: "通话期间收到 \(heldDuringCall) 条通知", body: "可以在 NotiBridge 的通知记录里查看。")
+                heldDuringCall = 0
+            }
+        default:
+            break
+        }
+    }
+
     private func scopedId(_ deviceId: String, _ id: String) -> String {
-        "\(deviceId.prefix(8))-\(id)"
+        // iPhone 的来源 id 前 8 位相同，要用完整 id 区分不同的 iPhone
+        deviceId.hasPrefix(Self.iphoneDeviceId) ? "\(deviceId)-\(id)" : "\(deviceId.prefix(8))-\(id)"
     }
 
     private func present(_ original: MirroredNotification, from deviceId: String) -> String {
@@ -584,7 +692,7 @@ final class AppModel: ObservableObject {
             case .duplicate:
                 result = "duplicate"
             case .new, .updated:
-                notifier.show(n, source: sourceLabel(deviceId))
+                if holdPopups { heldDuringCall += 1 } else { notifier.show(n, source: sourceLabel(deviceId)) }
                 result = "shown"
             }
         }
@@ -651,7 +759,7 @@ final class AppModel: ObservableObject {
         let change = pb.changeCount
         lastOtp = (o.code, o.appName, Date())
         todayOtp += 1
-        notifier.showOtp(code: o.code, app: o.appName, source: sourceLabel(deviceId))
+        if holdPopups { heldDuringCall += 1 } else { notifier.showOtp(code: o.code, app: o.appName, source: sourceLabel(deviceId)) }
         log("验证码已复制到剪贴板（来自 \(o.appName)，\(o.code.count) 位）")
         DispatchQueue.main.asyncAfter(deadline: .now() + 120) {
             if pb.changeCount == change {
@@ -673,6 +781,31 @@ final class AppModel: ObservableObject {
         logs.insert(LogLine(at: Date(), text: text), at: 0)
         if logs.count > 300 { logs.removeLast(logs.count - 300) }
         NSLog("NotiBridge: \(text)")
+        Self.appendLogFile(text)
+    }
+
+    /// 日志也写一份到 ~/Library/Logs/NotiBridge/notibridge.log（排查问题用，超过 1 MB 换新文件）
+    private static let logFile: URL = {
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/NotiBridge", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("notibridge.log")
+    }()
+
+    private static func appendLogFile(_ text: String) {
+        let f = logFile
+        if let size = (try? FileManager.default.attributesOfItem(atPath: f.path)[.size]) as? Int, size > 1_000_000 {
+            try? FileManager.default.removeItem(at: f.deletingPathExtension().appendingPathExtension("old.log"))
+            try? FileManager.default.moveItem(at: f, to: f.deletingPathExtension().appendingPathExtension("old.log"))
+        }
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(text)\n"
+        if let h = try? FileHandle(forWritingTo: f) {
+            h.seekToEndOfFile()
+            h.write(Data(line.utf8))
+            try? h.close()
+        } else {
+            try? Data(line.utf8).write(to: f)
+        }
     }
 
     private func saveFilter() {

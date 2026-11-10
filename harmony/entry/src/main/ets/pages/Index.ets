@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { promptAction } from '@kit.ArkUI';
-import { AppStatus, getUseMode, isOnboarded, loadStatus, setUseMode } from '../common/AppStatus';
+import { AppStatus, isOnboarded, loadStatus } from '../common/AppStatus';
 import { describeError } from '../common/ErrorDescriber';
 import { resetAllData } from '../common/DataReset';
 import { Logger } from '../common/Logger';
@@ -67,7 +67,6 @@ struct Index {
   @State recordsOn: boolean = true;
   @State records: Array<EventRecord> = [];
   @State cancelled: Array<string> = [];
-  @State useEsp32: boolean = false;
   @State loaded: boolean = false;
   @State appVersion: string = currentVersion();
   @State update: UpdateInfo | undefined = undefined;
@@ -94,14 +93,13 @@ struct Index {
     this.getUIContext().showAlertDialog({
       title: '安全升级：配对方式已更新，请在电脑和手机上重新配对',
       message: 'NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下配对过程也无法离线猜出配对码，并加了双向防重放。' +
-        '旧的配对已失效并已清除。\n\n请把电脑端也更新到 1.1.0，在电脑上点“配对新手机”，再到“电脑连接”里重新配对。',
+        '旧的配对已失效并已清除。\n\n请把电脑端也更新到 1.1.0，在电脑上点“添加设备”，再到“电脑连接”里重新配对。',
       confirm: { value: '知道了', action: () => {
       } },
     });
   }
 
   onPageShow(): void {
-    this.useEsp32 = getUseMode(this.ctx()) === 'esp32';
     if (this.loaded) {
       this.reload();
     }
@@ -203,17 +201,29 @@ struct Index {
     this.getUIContext().getRouter().pushUrl({ url: 'pages/MacLinkPage', params: { platform: platform } as LinkParams });
   }
 
+  /** 已配对的电脑：“名字（Mac）、名字（Windows）”，没有时为“未配对” */
+  private computerSummary(): string {
+    const parts: Array<string> = [];
+    if (this.status.macNames.length > 0) {
+      parts.push(`${this.status.macNames}（Mac）`);
+    }
+    if (this.status.windowsNames.length > 0) {
+      parts.push(`${this.status.windowsNames}（Windows）`);
+    }
+    return parts.length > 0 ? parts.join('、') : '未配对';
+  }
+
   private go(url: string): void {
     this.getUIContext().getRouter().pushUrl({ url: url });
   }
 
-  /** “继续设置”：从第一个还没完成的步骤开始（2 通知、3 蓝牙、4 电脑），不从欢迎页重来 */
+  /** “继续设置”：从第一个还没完成的步骤开始（1 通知、2 蓝牙、3 电脑），不从欢迎页重来 */
   private continueSetup(): void {
-    let start = 4;
+    let start = 3;
     if (!this.status.notificationReady) {
-      start = 2;
+      start = 1;
     } else if (!this.status.bluetoothReady) {
-      start = 3;
+      start = 2;
     }
     this.getUIContext().getRouter().pushUrl({
       url: 'pages/OnboardingPage', params: { startStep: start } as OnboardingParams
@@ -269,8 +279,7 @@ struct Index {
           .layoutWeight(1)
 
           Toggle({ type: ToggleType.Switch, isOn: this.status.syncOn })
-            .selectedColor('#33FFFFFF')
-            .switchPointColor(Color.White)
+            .selectedColor($r('app.color.hb_accent')) // 和其他开关一样：打开蓝色，关闭灰色
             .onChange((on: boolean) => this.updateSettings((s: SyncSettings) => {
               s.paused = !on;
             }))
@@ -617,25 +626,10 @@ struct Index {
             })
             NavRow({
               symbol: $r('sys.symbol.desktop'),
-              title: 'Mac 连接',
-              subtitle: this.status.macNames.length > 0 ? this.status.macNames : '未配对',
-              onTap: () => this.goLink('mac'),
-            })
-            SwitchRow({
-              title: '使用 ESP32 通话模块',
-              subtitle: this.useEsp32 ? '在电脑端 NotiBridge 中检测和刷写 ESP32（固件开发中）' : '纯软件：同步通知和验证码，不能接打电话',
-              isOn: this.useEsp32,
-              onToggle: (on: boolean) => {
-                this.useEsp32 = on;
-                setUseMode(this.ctx(), on ? 'esp32' : 'software');
-              },
-            })
-            NavRow({
-              symbol: $r('sys.symbol.desktop'),
-              title: 'Windows 连接',
-              subtitle: this.status.windowsNames.length > 0 ? this.status.windowsNames : '未配对',
+              title: '电脑连接',
+              subtitle: this.computerSummary(),
               showDivider: false,
-              onTap: () => this.goLink('windows'),
+              onTap: () => this.goLink(''),
             })
           }
         }

@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.2</string>
+	<string>1.3.0</string>
 	<key>CFBundleVersion</key>
-	<string>7</string>
+	<string>15</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -34,7 +34,9 @@
 	<string>© 2026 Shenghao Xu. MIT License.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>NotiBridge 需要访问本地网络：让同一 Wi-Fi 下的手机发现这台 Mac，并接收手机发来的加密通知。不会连接互联网上的任何服务器。</string>
+	<key>NSContactsUsageDescription</key>
+	<string>来电时显示联系人名字、在电脑上打电话时搜索联系人。只在这台 Mac 上读取，不会上传。</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>仅用于实验性的通话功能：在 Mac 上接听手机来电时作为话筒。</string>
+	<string>在 Mac 上接打手机电话时作为话筒。</string>
 </dict>
 </plist>

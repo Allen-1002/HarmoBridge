@@ -124,7 +124,7 @@ fun MainScreen(resumeTick: Int, onRerunOnboarding: () -> Unit, onContinueSetup: 
             title = { Text("安全升级：配对方式已更新，请在电脑和手机上重新配对") },
             text = {
                 Text("NotiBridge 1.1.0 是安全更新：配对改用 PAKE（CPace），即使有人录下配对过程也无法离线猜出配对码，并加了双向防重放。" +
-                    "旧的配对已失效并已清除。\n\n请把电脑端也更新到 1.1.0，在电脑上点“配对新手机”，再到“电脑连接”里重新配对。")
+                    "旧的配对已失效并已清除。\n\n请把电脑端也更新到 1.1.0，在电脑上点“添加设备”，再到“电脑连接”里重新配对。")
             },
             confirmButton = { TextButton(onClick = { repairNotice = false }) { Text("知道了") } },
         )
@@ -263,7 +263,6 @@ private fun SettingsTab(resumeTick: Int, onOpen: (String) -> Unit, onRerunOnboar
     val granted = NotifyListener.isGranted(ctx)
     val battery = Perms.ignoringBattery(ctx)
     val computers = app.store.pairedComputers()
-    var esp32 by remember { mutableStateOf(UiPrefs.useMode == "esp32") }
     var update by remember { mutableStateOf(Updater.cached(ctx)) }
     var checking by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<Float?>(null) }
@@ -348,12 +347,6 @@ private fun SettingsTab(resumeTick: Int, onOpen: (String) -> Unit, onRerunOnboar
             Divider()
             RowItem("电脑连接", if (computers.isEmpty()) "未配对" else computers.joinToString("、") { "${it.macName}（${it.platformLabel}）" },
                 onClick = { onOpen("computers") })
-            Divider()
-            ToggleItem("使用 ESP32 通话模块",
-                if (esp32) "在电脑端 NotiBridge 中检测和刷写 ESP32（固件开发中）" else "纯软件：同步通知和验证码，不能接打电话", esp32) { on ->
-                esp32 = on
-                UiPrefs.useMode = if (on) "esp32" else "software"
-            }
         }
 
         SectionTitle("过滤")

@@ -127,7 +127,15 @@ public sealed class AppModel : ObservableObject
     {
         _settings = AppSettings.Load();
         Esp32 = new Esp32Manager(_settings);
+        Contacts = new ContactsStore();
+        CallSession = new CallSession(Esp32, Contacts);
         _notifier = new Notifier(Log);
+        Esp32.LogLine += Log;
+        Esp32.Event += HandleEsp32;
+        Esp32.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(Esp32Manager.Iphones) or nameof(Esp32Manager.UseEsp32)) RaiseStatus();
+        };
         Updater = new Updater(_settings, Log)
         {
             // 正在配对手机时不更新（更新会重启程序，打断配对）
@@ -149,11 +157,12 @@ public sealed class AppModel : ObservableObject
     public void Start(string? updatedTo = null)
     {
         _server.Start(_settings.Port);
+        Esp32.StartLinkIfPossible();
         Updater.Start(updatedTo);
         if (HasRepairNotice)
         {
             Log(RepairNotice);
-            _notifier.ShowLocal(RepairNotice, "1.1.0 是安全更新，旧配对已清除。请在电脑上点“配对新手机”，并把手机也更新到 1.1.0 后重新配对。");
+            _notifier.ShowLocal(RepairNotice, "1.1.0 是安全更新，旧配对已清除。请在电脑上点“添加设备”，并把手机也更新到 1.1.0 后重新配对。");
         }
     }
 
@@ -216,16 +225,24 @@ public sealed class AppModel : ObservableObject
     public string PrimaryAddress => MdnsAdvertiser.PrimaryIPv4()?.ToString() ?? "未连接网络";
 
     public int OnlineCount => Devices.Count(d => d.IsOnline);
-    public bool HasDevices => Devices.Count > 0;
+    /// <summary>ESP32 模式下经 ESP32 配对的 iPhone 数量（纯软件模式为 0）</summary>
+    public int IphoneCount => Esp32.UseEsp32 ? Esp32.Iphones.Count : 0;
+    /// <summary>手机 App + iPhone</summary>
+    public int DeviceCount => Devices.Count + IphoneCount;
+    public bool HasDevices => DeviceCount > 0;
+
+    /// <summary>请主窗口打开“添加设备”（托盘菜单用）</summary>
+    public event Action? AddDeviceRequested;
+    public void RequestAddDevice() => AddDeviceRequested?.Invoke();
 
     public string Headline
     {
         get
         {
             if (Paused) return "同步已暂停";
-            if (Devices.Count == 0) return "还没有配对手机";
-            var online = OnlineCount;
-            return online > 0 ? $"{online} 台手机在线" : "正在待命";
+            if (!HasDevices) return "还没有设备";
+            var online = OnlineCount + (Esp32.UseEsp32 ? Esp32.Iphones.Count(p => p.AncsReady) : 0);
+            return online > 0 ? $"{online} 台设备在线" : "正在待命";
         }
     }
 
@@ -233,9 +250,9 @@ public sealed class AppModel : ObservableObject
     {
         get
         {
-            if (Devices.Count == 0) return "点“配对新手机”，在手机 NotiBridge 里输入配对码";
+            if (!HasDevices) return "点“添加设备”配对安卓、鸿蒙手机或 iPhone";
             var t = _lastSync is { } s ? $"最近同步 {s.LocalDateTime:HH:mm}" : "有通知时手机会自动连接";
-            return $"已配对 {Devices.Count} 台手机 · {t}";
+            return $"{DeviceCount} 台设备 · {t}";
         }
     }
 
@@ -252,6 +269,8 @@ public sealed class AppModel : ObservableObject
     private void RaiseStatus()
     {
         Raise(nameof(OnlineCount));
+        Raise(nameof(IphoneCount));
+        Raise(nameof(DeviceCount));
         Raise(nameof(HasDevices));
         Raise(nameof(Headline));
         Raise(nameof(SubHeadline));
@@ -350,6 +369,37 @@ public sealed class AppModel : ObservableObject
                 _server.SendSettings(merged, null, other);
         }
         _server.SendSettings(merged, seq, conn);
+    }
+
+    // ---------------- 通话 ----------------
+
+    /// <summary>电脑上的联系人（导入的 vcf/CSV）</summary>
+    public ContactsStore Contacts { get; }
+    /// <summary>当前通话（通话小窗、主窗口横条共用）</summary>
+    public CallSession CallSession { get; }
+    private CallWindow? _callWindow;
+    private int _heldDuringCall;
+    private bool HoldPopups => _settings.QuietDuringCalls && !Esp32.Call.IsIdle;
+
+    /// <summary>通话小窗在 App 启动后创建（需要界面线程）</summary>
+    public void AttachCallWindow() => _callWindow ??= new CallWindow(CallSession);
+
+    public bool QuietDuringCalls
+    {
+        get => _settings.QuietDuringCalls;
+        set { _settings.QuietDuringCalls = value; _settings.Save(); Raise(); }
+    }
+
+    public IReadOnlyList<string> RecentCalls => _settings.RecentCalls;
+
+    private void RememberCall(string number)
+    {
+        if (number.Length == 0) return;
+        _settings.RecentCalls.RemoveAll(n => PhoneNumbers.Key(n) == PhoneNumbers.Key(number));
+        _settings.RecentCalls.Insert(0, number);
+        if (_settings.RecentCalls.Count > 20) _settings.RecentCalls.RemoveRange(20, _settings.RecentCalls.Count - 20);
+        _settings.Save();
+        Raise(nameof(RecentCalls));
     }
 
     // ---------------- 本机设置 ----------------
@@ -569,7 +619,80 @@ public sealed class AppModel : ObservableObject
     }
 
     private DeviceItem? Device(string id) => Devices.FirstOrDefault(d => d.Id == id);
-    private string DeviceName(string id) => Device(id)?.Name ?? id[..Math.Min(8, id.Length)];
+    private string DeviceName(string id) =>
+        id.StartsWith(IphoneDeviceId, StringComparison.Ordinal)
+            // 经 ESP32 的 iPhone：用 ESP32 读到的 iPhone 名字
+            ? Esp32.Iphones.FirstOrDefault(p => id == IphoneSource(p.Id))?.DisplayName ?? "iPhone"
+            : Device(id)?.Name ?? id[..Math.Min(8, id.Length)];
+
+    /// <summary>同时有局域网手机和经 ESP32 的 iPhone 时标出来源</summary>
+    private bool MultipleSources => Devices.Count + (Esp32.UseEsp32 ? Math.Max(1, Esp32.Iphones.Count) : 0) > 1;
+
+    /// <summary>经 ESP32 的 iPhone 的来源 id："iphone:&lt;蓝牙地址&gt;"（旧固件没有地址时为 "iphone"）</summary>
+    private static string IphoneSource(string peer) => peer.Length == 0 ? IphoneDeviceId : $"{IphoneDeviceId}:{peer}";
+
+    // ---------------- 经 ESP32 收到的 iPhone 通知（ANCS） ----------------
+
+    private const string IphoneDeviceId = "iphone";
+    private string _lastIphoneBle = "";
+    private string _lastCallState = "idle";
+
+    private void HandleEsp32(Esp32Event e)
+    {
+        switch (e)
+        {
+            case Esp32Event.Notification { Item: var n }:
+                // 连接时 iPhone 会补发通知中心里已有的通知：不弹出
+                if (n.PreExisting) return;
+                // iPhone 自己的“来电”通知：通话小窗已经在提醒了，不再重复弹
+                if (n.Category == 1 && Esp32.Hfp is { Connected: true }) return;
+                var m = n.Mirrored();
+                if (!Paused && !_settings.Filter.Blacklist.Contains(m.BundleName) && CopyOtp)
+                {
+                    var code = OtpExtractor.Extract(m.Title, m.Text);
+                    if (code.Length > 0)
+                    {
+                        if (BlockSensitive && OtpExtractor.IsFinance(m.BundleName, m.Title, m.Text))
+                            Log($"已跳过银行/支付类验证码（{m.AppName}）");
+                        else
+                            HandleOtp(new OtpCode(m.Id, m.BundleName, m.AppName, code), IphoneSource(n.Peer));
+                        return;
+                    }
+                }
+                PresentFrom(m, IphoneSource(n.Peer));
+                break;
+            case Esp32Event.Removed r:
+                var id = $"ios-{r.Uid}";
+                var src = IphoneSource(r.Peer);
+                _notifier.Remove(src, [id]);
+                _deduper.Remove(src + "|" + id);
+                break;
+            case Esp32Event.Call { Info: var c } when c.State != _lastCallState:
+                // 来电/通话由通话小窗提醒，不再发系统通知
+                if (c.State == "incoming")
+                {
+                    Log($"来电 {(c.Number.Length == 0 ? "未知号码" : c.Number)}（经 ESP32）");
+                    RememberCall(c.Number);
+                }
+                else if (c.State == "active") { Log("通话已接通"); RememberCall(c.Number); }
+                else if (c.IsIdle && _lastCallState != "idle")
+                {
+                    Log("通话结束");
+                    if (_heldDuringCall > 0)
+                    {
+                        _notifier.ShowLocal($"通话期间收到 {_heldDuringCall} 条通知", "可以在 NotiBridge 的通知记录里查看。");
+                        _heldDuringCall = 0;
+                    }
+                }
+                _lastCallState = c.State;
+                break;
+            case Esp32Event.State s when s.Link.Ble != _lastIphoneBle:
+                if (s.Link.Ready) Log("iPhone 已通过 ESP32 连接");
+                else if (_lastIphoneBle == "ready") Log("iPhone 已断开，ESP32 等待重新连接");
+                _lastIphoneBle = s.Link.Ble;
+                break;
+        }
+    }
 
     // ---------------- 事件处理 ----------------
 
@@ -687,9 +810,11 @@ public sealed class AppModel : ObservableObject
         Raise(nameof(SubHeadline));
     }
 
-    private string Present(MirroredNotification n, Guid conn)
+    private string Present(MirroredNotification n, Guid conn) =>
+        PresentFrom(n, _connectionDevice.GetValueOrDefault(conn, ""));
+
+    private string PresentFrom(MirroredNotification n, string dev)
     {
-        var dev = _connectionDevice.GetValueOrDefault(conn, "");
         string result;
         if (Paused)
         {
@@ -709,7 +834,8 @@ public sealed class AppModel : ObservableObject
                     result = "duplicate";
                     break;
                 default:
-                    _notifier.Show(n, dev, DeviceName(dev), Devices.Count > 1);
+                    if (HoldPopups) _heldDuringCall++;
+                    else _notifier.Show(n, dev, DeviceName(dev), MultipleSources);
                     result = "shown";
                     break;
             }
@@ -742,7 +868,8 @@ public sealed class AppModel : ObservableObject
         Raise(nameof(LastOtpText));
         Raise(nameof(HasLastOtp));
         RaiseStats();
-        _notifier.ShowOtp(o.Code, o.AppName, Devices.Count > 1 && dev.Length > 0 ? DeviceName(dev) : null);
+        if (HoldPopups) _heldDuringCall++;
+        else _notifier.ShowOtp(o.Code, o.AppName, MultipleSources && dev.Length > 0 ? DeviceName(dev) : null);
         Log($"验证码已复制到剪贴板（来自 {o.AppName}，{o.Code.Length} 位）");
         // 2 分钟后若剪贴板没被改过，就清除
         var t = new DispatcherTimer { Interval = TimeSpan.FromMinutes(2) };

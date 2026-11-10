@@ -170,9 +170,9 @@ Windows 安装包没有 Authenticode 代码签名证书（未购买），Windows
 
 ## 扩展预留
 
-`kind` 以 `call.` 开头的消息保留给 ESP32 通话模块，通知模块忽略这些消息。
+`kind` 以 `call.` 开头的消息为保留值，当前版本的手机和电脑都忽略这类消息。通话不经过本协议，而是由 ESP32 经 USB 串口与电脑交互。
 
-## ESP32 通话模块（预留）
+## ESP32 模块
 
 电脑通过 USB 串口（115200 8N1）连接 ESP32。检测固件：电脑发送 `HB?\n`，NotiBridge 固件回复一行 `HB-ESP32 <版本> ...`，2 秒内收到即视为已刷写。
-固件尚未发布。
+完整的串口命令和事件见 [esp32-serial.md](esp32-serial.md)。固件负责 iPhone 通知（BLE ANCS）和手机通话（经典蓝牙 HFP），与本协议相互独立。

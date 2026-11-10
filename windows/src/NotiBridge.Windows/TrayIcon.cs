@@ -4,7 +4,7 @@ using Drawing = System.Drawing;
 
 namespace NotiBridge.Windows;
 
-/// <summary>系统托盘图标（对应 Mac 菜单栏图标）：显示状态、快速暂停同步、配对新手机。</summary>
+/// <summary>系统托盘图标（对应 Mac 菜单栏图标）：显示状态、快速暂停同步、添加设备。</summary>
 internal sealed class TrayIcon : IDisposable
 {
     private readonly Forms.NotifyIcon _icon;
@@ -28,10 +28,10 @@ internal sealed class TrayIcon : IDisposable
         menu.Items.Add(_status);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("打开主窗口", null, (_, _) => Open());
-        menu.Items.Add("配对新手机", null, (_, _) =>
+        menu.Items.Add("添加设备", null, (_, _) =>
         {
-            _model.OpenPairing();
             showMain();
+            _model.RequestAddDevice();
         });
         menu.Items.Add(_pause);
         menu.Items.Add("复制最近的验证码", null, (_, _) => _model.CopyLastOtp());

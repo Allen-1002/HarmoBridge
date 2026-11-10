@@ -54,6 +54,7 @@
 | 1600023 | 未实现 NotificationSubscriberExtensionAbility | 检查 module.json5 的 `notificationSubscriber` 扩展配置 |
 | 2900003 | 蓝牙未打开 | 打开蓝牙 |
 
-## 通话（实验结论）
+## 通话
 
-macOS 自带的 `IOBluetoothHandsFreeDevice` 理论上可以让 Mac 作为 HFP 免提设备，但实测手机拒绝了 Mac 发起的 HFP RFCOMM 连接。通话功能计划改用 ESP32（经典蓝牙 HFP + USB 串口），Mac 端已预留 `CallBridge` 接口。
+macOS 自带的 `IOBluetoothHandsFreeDevice` 理论上可以让 Mac 作为 HFP 免提设备，但实测手机拒绝了 Mac 发起的 HFP RFCOMM 连接（错误 0x22f）。
+通话因此改由 ESP32 实现：ESP32 作为经典蓝牙 HFP 免提设备与手机配对，音频以 PCM 经 USB 串口与电脑交换，见 [esp32-serial.md](esp32-serial.md)。
