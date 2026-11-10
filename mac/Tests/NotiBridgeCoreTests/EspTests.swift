@@ -14,6 +14,7 @@ final class FakeRom: EspSerialTransport {
     var corruptBlock: Int?
     var syncIgnoredTimes = 0
     var resets = 0
+    var readCount = 0
     private var writeOffset = 0
     private var blockSize = 0
     private var expectedSeq = 0
@@ -96,9 +97,91 @@ final class FakeRom: EspSerialTransport {
             reply(cmd, Array(hex.utf8))
         case 0x04:
             reply(cmd)
+        case 0x0A:
+            // eFuse MAC：1c:8f:57:16:d3:44
+            let addr = u32(data, 0)
+            let v: UInt32 = addr == 0x3FF5_A004 ? 0x5716_D344 : addr == 0x3FF5_A008 ? 0x0000_1C8F : 0
+            let n = UInt16(4)
+            output += EspSlip.encode([0x01, cmd, UInt8(n), 0] + EspRomPacket.le32(v) + [0, 0, 0, 0])
+        case 0x0E:
+            let off = u32(data, 0), len = u32(data, 4)
+            readCount += 1
+            reply(cmd, Array(flash[off..<(off + len)]))
         default:
             reply(cmd, status: 1, err: 0x05)
         }
+    }
+}
+
+final class EspBackupTests: XCTestCase {
+    private func tempStore() -> EspBackupStore {
+        EspBackupStore(directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("esp-backup-\(UUID().uuidString)"))
+    }
+
+    /// 把一段字节写成假的应用镜像头（esp_app_desc_t 的 project_name）
+    private func fakeApp(_ rom: FakeRom, name: String) {
+        let base = 0x10020
+        rom.flash.replaceSubrange(base..<(base + 4), with: EspRomPacket.le32(0xABCD_5432))
+        var n = Array(name.utf8) + [UInt8](repeating: 0, count: 32 - name.utf8.count)
+        n = Array(n.prefix(32))
+        rom.flash.replaceSubrange((base + 0x30)..<(base + 0x50), with: n)
+    }
+
+    func testBackupFlashAgainAndRestore() throws {
+        let rom = FakeRom()
+        // 原固件：bootloader、应用、远处的数据分区
+        for i in 0x1000..<0x6000 { rom.flash[i] = UInt8(i & 0x7F) }
+        fakeApp(rom, name: "factory_demo")
+        for i in 0x300000..<0x300100 { rom.flash[i] = 0x42 }
+        let original = rom.flash
+        let store = tempStore()
+        let fw1 = [UInt8](repeating: 0x11, count: 0x20000)
+
+        XCTAssertEqual(try EspFirmwareInstaller.install(image: fw1, port: rom, store: store, resetDelay: 0), .created)
+        // 只读了非空的块（3 块 × 64KB / 64 字节），不是整个 4MB
+        XCTAssertLessThan(rom.readCount, 3 * 1024 + 10)
+        XCTAssertEqual(Array(rom.flash[0x1000..<0x21000]), fw1)
+        let info = try XCTUnwrap(store.info(mac: "1c:8f:57:16:d3:44"))
+        XCTAssertEqual(info.touchedEnd, 0x21000)
+        XCTAssertFalse(info.wasBlank)
+
+        // 再刷一个更大的版本：不重新备份，记录更远的写入位置
+        fakeApp(rom, name: "notibridge_esp32")
+        let fw2 = [UInt8](repeating: 0x22, count: 0x40000)
+        XCTAssertEqual(try EspFirmwareInstaller.install(image: fw2, port: rom, store: store, resetDelay: 0), .kept)
+        XCTAssertEqual(store.info(mac: "1c:8f:57:16:d3:44")?.touchedEnd, 0x41000)
+
+        // 模拟固件运行时写了 NVS
+        for i in 0x9000..<0x9100 { rom.flash[i] = 0x99 }
+        _ = try EspFirmwareInstaller.restore(port: rom, store: store, resetDelay: 0)
+        XCTAssertEqual(rom.flash, original)
+        XCTAssertFalse(rom.inBootloader)
+    }
+
+    func testNoBackupWhenAlreadyNotiBridge() throws {
+        let rom = FakeRom()
+        fakeApp(rom, name: "notibridge_esp32")
+        let store = tempStore()
+        XCTAssertEqual(try EspFirmwareInstaller.install(image: [1, 2, 3], port: rom, store: store, resetDelay: 0),
+                       .alreadyNotiBridge)
+        XCTAssertNil(store.info(mac: "1c:8f:57:16:d3:44"))
+        XCTAssertThrowsError(try EspFirmwareInstaller.restore(port: rom, store: store, resetDelay: 0))
+    }
+
+    func testBlankBoardAndCorruptBackup() throws {
+        let rom = FakeRom()
+        let store = tempStore()
+        XCTAssertEqual(try EspFirmwareInstaller.install(image: [1, 2, 3], port: rom, store: store, resetDelay: 0), .created)
+        XCTAssertEqual(store.info(mac: "1c:8f:57:16:d3:44")?.wasBlank, true)
+        XCTAssertEqual(rom.readCount, 2) // 只读了应用描述，空块都跳过
+        // 备份被改动后拒绝还原
+        let url = store.imageURL(mac: "1c:8f:57:16:d3:44")
+        var data = try Data(contentsOf: url)
+        data[10] ^= 1
+        try data.write(to: url)
+        XCTAssertThrowsError(try EspFirmwareInstaller.restore(port: rom, store: store, resetDelay: 0))
+        XCTAssertEqual(store.all().count, 1)
     }
 }
 
@@ -244,5 +327,52 @@ final class OtpExtractorTests: XCTestCase {
         XCTAssertTrue(OtpExtractor.isFinance(bundleName: "com.icbc.iphoneclient", title: "", text: ""))
         XCTAssertTrue(OtpExtractor.isFinance(bundleName: "x", title: "", text: "您的银行卡"))
         XCTAssertFalse(OtpExtractor.isFinance(bundleName: "com.apple.MobileSMS", title: "", text: "验证码 1234"))
+    }
+}
+
+/// 真板读取速度（默认跳过）：HB_ESP_PORT=/dev/cu.xxx swift test --filter RealBoardRead
+final class RealBoardReadTests: XCTestCase {
+    func testReadSpeed() throws {
+        guard let path = ProcessInfo.processInfo.environment["HB_ESP_PORT"] else { throw XCTSkip("未设置 HB_ESP_PORT") }
+        let port = try PosixSerialPort(path: path)
+        let f = EspFlasher(port: port)
+        try f.begin()
+        print("MAC \(try f.readMac())")
+        let t = Date()
+        let data = try f.read(offset: 0x1000, length: 64 * 1024)
+        let secs = Date().timeIntervalSince(t)
+        print("读取 64KB 用时 \(String(format: "%.2f", secs)) 秒")
+        XCTAssertEqual(EspFlasher.md5Hex(data), try f.md5(offset: 0x1000, length: data.count))
+        try f.finish()
+    }
+}
+
+/// 真板备份/还原（默认跳过）：HB_ESP_PORT HB_ESP_STORE=目录 HB_ESP_ACTION=install|restore [HB_ESP_IMAGE]
+final class RealBoardBackupTests: XCTestCase {
+    func testBackupAction() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["HB_ESP_PORT"], let dir = env["HB_ESP_STORE"], let action = env["HB_ESP_ACTION"] else {
+            throw XCTSkip("未设置 HB_ESP_PORT / HB_ESP_STORE / HB_ESP_ACTION")
+        }
+        let store = EspBackupStore(directory: URL(fileURLWithPath: dir))
+        let port = try PosixSerialPort(path: path)
+        var last = ""
+        let onStage: (EspFlasher.Stage) -> Void = { s in
+            let d: String
+            switch s {
+            case let .backingUp(p): d = "备份 \(Int(p * 10) * 10)%"
+            case let .writing(p): d = "写入 \(Int(p * 10) * 10)%"
+            default: d = "\(s)"
+            }
+            if d != last { last = d; print(d) }
+        }
+        let t = Date()
+        if action == "install" {
+            let image = [UInt8](try Data(contentsOf: URL(fileURLWithPath: env["HB_ESP_IMAGE"]!)))
+            print("结果 \(try EspFirmwareInstaller.install(image: image, port: port, store: store, onStage: onStage))")
+        } else {
+            print("还原 \(try EspFirmwareInstaller.restore(port: port, store: store, onStage: onStage))")
+        }
+        print("用时 \(String(format: "%.1f", Date().timeIntervalSince(t))) 秒")
     }
 }

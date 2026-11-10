@@ -58,6 +58,7 @@ public enum EspRomCommand: UInt8 {
     case flashEnd = 0x04
     case sync = 0x08
     case readReg = 0x0A
+    case readFlashSlow = 0x0E
     case spiSetParams = 0x0B
     case spiAttach = 0x0D
     case changeBaudrate = 0x0F
@@ -137,6 +138,8 @@ public enum EspFlashError: Error, CustomStringConvertible {
 public final class EspFlasher {
     public enum Stage: Equatable {
         case connecting
+        /// 读取原固件做备份（0~1）
+        case backingUp(Double)
         case erasing
         case writing(Double)
         case verifying
@@ -157,8 +160,16 @@ public final class EspFlasher {
 
     /// 刷写镜像到 offset（合并镜像从 0x1000 开始），完成后复位运行新固件。
     public func flash(image: [UInt8], offset: UInt32, fastBaud: Int? = 460_800, flashSize: UInt32 = 4 << 20) throws {
-        guard !image.isEmpty else { throw EspFlashError.badImage("文件为空") }
-        guard Int(offset) + image.count <= Int(flashSize) else { throw EspFlashError.badImage("超过闪存大小") }
+        try begin(fastBaud: fastBaud, flashSize: flashSize)
+        try write(image: image, offset: offset, flashSize: flashSize)
+        try finish()
+    }
+
+    private(set) var flashSize: UInt32 = 4 << 20
+
+    /// 进入下载模式、连接闪存、切换波特率。之后可以多次 read/write，最后 finish。
+    public func begin(fastBaud: Int? = 460_800, flashSize: UInt32 = 4 << 20) throws {
+        self.flashSize = flashSize
         onStage?(.connecting)
         try connect()
         _ = try command(.spiAttach, EspRomPacket.le32s(0, 0), step: "连接闪存")
@@ -171,6 +182,43 @@ public final class EspFlasher {
             port.flushInput()
             decoder = EspSlip.Decoder()
             pending = []
+        }
+    }
+
+    /// 读出芯片的出厂 MAC 地址（eFuse），用来区分不同的板子。
+    public func readMac() throws -> String {
+        let w1 = try command(.readReg, EspRomPacket.le32(0x3FF5_A004), step: "读取芯片地址").value
+        let w2 = try command(.readReg, EspRomPacket.le32(0x3FF5_A008), step: "读取芯片地址").value
+        let bytes = [UInt8(w2 >> 8 & 0xFF), UInt8(w2 & 0xFF), UInt8(w1 >> 24 & 0xFF), UInt8(w1 >> 16 & 0xFF),
+                     UInt8(w1 >> 8 & 0xFF), UInt8(w1 & 0xFF)]
+        return bytes.map { String(format: "%02x", $0) }.joined(separator: ":")
+    }
+
+    /// 读闪存（ROM 的慢速读取，每次 64 字节）。progress 为 0~1。
+    public func read(offset: UInt32, length: Int, progress: ((Double) -> Void)? = nil) throws -> [UInt8] {
+        var out: [UInt8] = []
+        out.reserveCapacity(length)
+        var lastReport = 0
+        while out.count < length {
+            let n = min(64, length - out.count)
+            let r = try command(.readFlashSlow, EspRomPacket.le32s(offset + UInt32(out.count), UInt32(n)),
+                                step: "读取闪存", timeout: 2)
+            let p = r.payload
+            guard p.count >= n else { throw EspFlashError.romError("读取闪存", 0xFE) }
+            out += p[0..<n]
+            if out.count - lastReport >= 16384 || out.count == length {
+                lastReport = out.count
+                progress?(Double(out.count) / Double(length))
+            }
+        }
+        return out
+    }
+
+    /// 擦除并写入一段镜像，写完用 MD5 校验。
+    public func write(image: [UInt8], offset: UInt32, flashSize: UInt32? = nil) throws {
+        guard !image.isEmpty else { throw EspFlashError.badImage("文件为空") }
+        guard Int(offset) + image.count <= Int(flashSize ?? self.flashSize) else {
+            throw EspFlashError.badImage("超过闪存大小")
         }
         let block = EspRomPacket.flashBlockSize
         let blocks = (image.count + block - 1) / block
@@ -188,20 +236,25 @@ public final class EspFlasher {
             onStage?(.writing(Double(seq + 1) / Double(blocks)))
         }
         onStage?(.verifying)
-        let md5 = try command(.spiFlashMd5, EspRomPacket.le32s(offset, UInt32(image.count), 0, 0),
-                              step: "校验", timeout: max(8, Double(image.count) / 1_000_000 * 10))
-        let expected = Insecure.MD5.hash(data: Data(image)).map { String(format: "%02x", $0) }.joined()
-        let got: String
-        let p = md5.payload
-        if p.count == 32 {
-            got = String(decoding: p, as: UTF8.self).lowercased()
-        } else if p.count == 16 {
-            got = p.map { String(format: "%02x", $0) }.joined()
-        } else {
-            throw EspFlashError.verifyFailed
-        }
-        guard got == expected else { throw EspFlashError.verifyFailed }
-        // 留在下载模式（参数 1），再用 RTS 硬复位运行新固件
+        guard try md5(offset: offset, length: image.count) == Self.md5Hex(image) else { throw EspFlashError.verifyFailed }
+    }
+
+    public static func md5Hex(_ data: [UInt8]) -> String {
+        Insecure.MD5.hash(data: Data(data)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 闪存一段区域的 MD5（芯片内计算）
+    public func md5(offset: UInt32, length: Int) throws -> String {
+        let r = try command(.spiFlashMd5, EspRomPacket.le32s(offset, UInt32(length), 0, 0),
+                            step: "校验", timeout: max(8, Double(length) / 1_000_000 * 10))
+        let p = r.payload
+        if p.count == 32 { return String(decoding: p, as: UTF8.self).lowercased() }
+        if p.count == 16 { return p.map { String(format: "%02x", $0) }.joined() }
+        throw EspFlashError.verifyFailed
+    }
+
+    /// 退出下载模式（参数 1 = 留在下载模式），再用 RTS 硬复位运行固件。
+    public func finish() throws {
         _ = try? command(.flashEnd, EspRomPacket.le32(1), step: "结束", timeout: 2)
         try hardReset()
         onStage?(.done)

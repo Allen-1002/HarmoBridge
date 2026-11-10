@@ -1,3 +1,4 @@
+using System.IO;
 using System.IO.Ports;
 using NotiBridge.Core;
 using System.Management;
@@ -162,10 +163,27 @@ public sealed partial class Esp32Manager : ObservableObject
         FirmwareOk = true;
     }
 
-    /// <summary>刷写随程序打包的固件（ESP32 ROM 下载协议，不需要 esptool）。</summary>
+    /// <summary>原固件备份（不在程序数据目录里，“清除所有数据”不会删掉）</summary>
+    public static readonly EspBackupStore BackupStore = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NotiBridge ESP32 Backups"));
+
+    private int _backupCount = BackupStore.All().Count;
+    public bool HasBackups => _backupCount > 0;
+    public string BackupText => $"已备份 {_backupCount} 块板子的原固件";
+
+    private static string StageText(EspFlashStage s, double p, bool restoring) => s switch
+    {
+        EspFlashStage.Connecting => "正在进入下载模式…",
+        EspFlashStage.BackingUp => $"正在备份原固件 {(int)(p * 100)}%（只在第一次刷写时备份）",
+        EspFlashStage.Erasing => "正在擦除…",
+        EspFlashStage.Writing => $"正在{(restoring ? "还原" : "写入")} {(int)(p * 100)}%",
+        EspFlashStage.Verifying => "正在校验…",
+        _ => "完成",
+    } + "（不要拔掉板子）";
+
+    /// <summary>刷写随程序打包的固件（ESP32 ROM 下载协议，不需要 esptool）。第一次刷写某块板子前自动备份原固件。</summary>
     public async void Flash()
     {
-        if (Selected is not { } port) return;
         using var stream = typeof(Esp32Manager).Assembly.GetManifestResourceStream(FirmwareResource);
         if (stream is null)
         {
@@ -174,6 +192,40 @@ public sealed partial class Esp32Manager : ObservableObject
         }
         var image = new byte[stream.Length];
         stream.ReadExactly(image);
+        LogLine?.Invoke($"开始刷写 ESP32 固件 {BundledVersion}（{image.Length / 1024} KB）");
+        var ok = await RunOnBoard(false, (t, stage, log) =>
+            EspFirmwareInstaller.Install(image, t, BackupStore, stage, log) switch
+            {
+                EspFirmwareInstaller.BackupOutcome.Created => "ESP32 固件刷写完成，原固件已备份，可以随时还原",
+                EspFirmwareInstaller.BackupOutcome.Kept => "ESP32 固件刷写完成（原固件备份已存在，保留不动）",
+                _ => "ESP32 固件刷写完成（板子上原本就是 NotiBridge 固件，没有可备份的原固件）",
+            });
+        if (ok)
+        {
+            await Task.Delay(1500);
+            await CheckFirmwareAsync();
+        }
+    }
+
+    /// <summary>把板子还原为第一次刷写 NotiBridge 之前的原固件。</summary>
+    public async void RestoreOriginal()
+    {
+        LogLine?.Invoke("开始还原 ESP32 原固件");
+        var ok = await RunOnBoard(true, (t, stage, log) =>
+            $"已还原为原固件（备份于 {EspFirmwareInstaller.Restore(t, BackupStore, stage, log).CreatedAt.LocalDateTime:g}）");
+        if (ok) FirmwareText = "";
+    }
+
+    public void RevealBackups()
+    {
+        Directory.CreateDirectory(BackupStore.Directory);
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", BackupStore.Directory) { UseShellExecute = true });
+    }
+
+    private async Task<bool> RunOnBoard(bool restoring,
+        Func<SerialPortTransport, Action<EspFlashStage, double>, Action<string>, string> work)
+    {
+        if (Selected is not { } port) return false;
         StopLink();
         Busy = true;
         Flashing = true;
@@ -181,52 +233,40 @@ public sealed partial class Esp32Manager : ObservableObject
         FirmwareOk = false;
         FlashProgress = 0;
         FirmwareText = "正在进入下载模式…（不要拔掉板子）";
-        LogLine?.Invoke($"开始刷写 ESP32 固件 {BundledVersion}（{image.Length / 1024} KB）");
         var d = System.Windows.Application.Current?.Dispatcher;
-        string? error = await Task.Run(() =>
+        var (text, error) = await Task.Run<(string?, string?)>(() =>
         {
             try
             {
                 using var t = new SerialPortTransport(port.Port);
-                var f = new EspFlasher(t);
-                f.Stage += (s, p) => d?.BeginInvoke(() =>
-                {
-                    FlashProgress = p;
-                    FirmwareText = s switch
-                    {
-                        EspFlashStage.Connecting => "正在进入下载模式…",
-                        EspFlashStage.Erasing => "正在擦除…",
-                        EspFlashStage.Writing => $"正在写入 {(int)(p * 100)}%",
-                        EspFlashStage.Verifying => "正在校验…",
-                        _ => "完成",
-                    } + "（不要拔掉板子）";
-                });
-                f.Flash(image, FirmwareOffset);
-                return null;
+                return (work(t,
+                    (s, p) => d?.BeginInvoke(() => { FlashProgress = p; FirmwareText = StageText(s, p, restoring); }),
+                    l => d?.BeginInvoke(() => LogLine?.Invoke(l))), null);
             }
             catch (UnauthorizedAccessException)
             {
-                return "串口被其他程序占用（例如 Arduino IDE 的串口监视器）";
+                return (null, "串口被其他程序占用（例如 Arduino IDE 的串口监视器）");
             }
             catch (Exception e)
             {
-                return e.Message;
+                return (null, e.Message);
             }
         });
         Busy = false;
         Flashing = false;
+        _backupCount = BackupStore.All().Count;
+        Raise(nameof(HasBackups));
+        Raise(nameof(BackupText));
         if (error is null)
         {
-            LogLine?.Invoke("ESP32 固件刷写完成");
-            await Task.Delay(1500);
-            await CheckFirmwareAsync();
+            LogLine?.Invoke(text!);
+            Message = text!;
+            return true;
         }
-        else
-        {
-            FirmwareText = $"刷写失败：{error}";
-            FirmwareMissing = true;
-            LogLine?.Invoke($"ESP32 刷写失败：{error}");
-        }
+        FirmwareText = $"{(restoring ? "还原" : "刷写")}失败：{error}";
+        FirmwareMissing = !restoring;
+        LogLine?.Invoke($"ESP32 {(restoring ? "还原" : "刷写")}失败：{error}");
+        return false;
     }
 
     public void SkipFlash()

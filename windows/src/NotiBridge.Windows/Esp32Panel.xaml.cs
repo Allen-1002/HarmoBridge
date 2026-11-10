@@ -25,6 +25,13 @@ public partial class Esp32Panel : UserControl
 
     private void OnFlash(object sender, RoutedEventArgs e) => Esp?.Flash();
     private void OnSkip(object sender, RoutedEventArgs e) => Esp?.SkipFlash();
+    private void OnReveal(object sender, RoutedEventArgs e) => Esp?.RevealBackups();
+    private void OnRestore(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("会把这块板子恢复成第一次刷写 NotiBridge 之前的样子，iPhone 配对也会一起清除。备份文件会保留，之后还可以再刷写 NotiBridge。", "还原原固件",
+                MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK)
+            Esp?.RestoreOriginal();
+    }
     private void OnPair(object sender, RoutedEventArgs e) => Esp?.PairNewIphone();
     private void OnForget(object sender, RoutedEventArgs e)
     {

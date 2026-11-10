@@ -10,7 +10,7 @@
 
 #define LINK_UART UART_NUM_0
 #define LINK_BAUD 115200
-#define LINE_MAX 256
+#define CMD_LINE_MAX 256
 
 static SemaphoreHandle_t tx_lock;
 static SemaphoreHandle_t fmt_lock;
@@ -38,7 +38,7 @@ void serial_eventf(const char *fmt, ...) {
 }
 
 static void rx_task(void *arg) {
-    char line[LINE_MAX];
+    char line[CMD_LINE_MAX];
     size_t len = 0;
     uint8_t ch[64];
     for (;;) {
@@ -50,7 +50,7 @@ static void rx_task(void *arg) {
                 line[len] = 0;
                 if (len > 0 && cmd_handler) cmd_handler(line);
                 len = 0;
-            } else if (len < LINE_MAX - 1) {
+            } else if (len < CMD_LINE_MAX - 1) {
                 line[len++] = c;
             }
         }

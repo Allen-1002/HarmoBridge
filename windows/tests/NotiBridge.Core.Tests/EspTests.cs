@@ -13,6 +13,7 @@ internal sealed class FakeRom : IEspSerialTransport
     public int Baud = 115_200;
     public int? CorruptBlock;
     public int SyncIgnoredTimes;
+    public int ReadCount;
     private readonly List<byte> _out = [];
     private readonly EspSlip.Decoder _dec = new();
     private int _writeOffset, _blockSize, _expectedSeq, _resetPhase;
@@ -109,6 +110,20 @@ internal sealed class FakeRom : IEspSerialTransport
             case 0x04:
                 Reply(cmd);
                 break;
+            case 0x0A:
+                {
+                    uint addr = (uint)U32(data, 0);
+                    uint v = addr == 0x3FF5A004 ? 0x5716D344u : addr == 0x3FF5A008 ? 0x1C8Fu : 0;
+                    _out.AddRange(EspSlip.Encode(new byte[] { 0x01, cmd, 4, 0 }.Concat(EspRomPacket.Le32(v)).Concat(new byte[] { 0, 0, 0, 0 }).ToArray()));
+                    break;
+                }
+            case 0x0E:
+                {
+                    int off = U32(data, 0), len = U32(data, 4);
+                    ReadCount++;
+                    Reply(cmd, Flash[off..(off + len)]);
+                    break;
+                }
             default:
                 Reply(cmd, status: 1, err: 5);
                 break;
@@ -220,5 +235,73 @@ public class EspTests
         Assert.Equal("", OtpExtractor.Extract("张三", "明天 1530 见"));
         Assert.True(OtpExtractor.IsFinance("com.icbc.iphoneclient", "", ""));
         Assert.False(OtpExtractor.IsFinance("com.apple.MobileSMS", "", "验证码 1234"));
+    }
+}
+
+public class EspBackupTests
+{
+    private const string Mac = "1c:8f:57:16:d3:44";
+    private static readonly TimeSpan Zero = TimeSpan.Zero;
+
+    private static EspBackupStore TempStore() => new(Path.Combine(Path.GetTempPath(), "esp-backup-" + Guid.NewGuid()));
+
+    private static void FakeApp(FakeRom rom, string name)
+    {
+        EspRomPacket.Le32(0xABCD5432).CopyTo(rom.Flash, 0x10020);
+        var n = new byte[32];
+        Encoding.UTF8.GetBytes(name).CopyTo(n, 0);
+        n.CopyTo(rom.Flash, 0x10020 + 0x30);
+    }
+
+    [Fact]
+    public void BackupFlashAgainAndRestore()
+    {
+        var rom = new FakeRom();
+        for (int i = 0x1000; i < 0x6000; i++) rom.Flash[i] = (byte)(i & 0x7F);
+        FakeApp(rom, "factory_demo");
+        for (int i = 0x300000; i < 0x300100; i++) rom.Flash[i] = 0x42;
+        var original = (byte[])rom.Flash.Clone();
+        var store = TempStore();
+        var fw1 = Enumerable.Repeat((byte)0x11, 0x20000).ToArray();
+        Assert.Equal(EspFirmwareInstaller.BackupOutcome.Created, EspFirmwareInstaller.Install(fw1, rom, store, resetDelay: Zero));
+        Assert.True(rom.ReadCount < 3 * 1024 + 10);
+        Assert.Equal(0x21000u, store.Info(Mac)!.TouchedEnd);
+
+        FakeApp(rom, "notibridge_esp32");
+        var fw2 = Enumerable.Repeat((byte)0x22, 0x40000).ToArray();
+        Assert.Equal(EspFirmwareInstaller.BackupOutcome.Kept, EspFirmwareInstaller.Install(fw2, rom, store, resetDelay: Zero));
+        Assert.Equal(0x41000u, store.Info(Mac)!.TouchedEnd);
+
+        for (int i = 0x9000; i < 0x9100; i++) rom.Flash[i] = 0x99;
+        EspFirmwareInstaller.Restore(rom, store, resetDelay: Zero);
+        Assert.Equal(original, rom.Flash);
+        Assert.False(rom.InBootloader);
+    }
+
+    [Fact]
+    public void NoBackupWhenAlreadyNotiBridge()
+    {
+        var rom = new FakeRom();
+        FakeApp(rom, "notibridge_esp32");
+        var store = TempStore();
+        Assert.Equal(EspFirmwareInstaller.BackupOutcome.AlreadyNotiBridge, EspFirmwareInstaller.Install([1, 2, 3], rom, store, resetDelay: Zero));
+        Assert.Null(store.Info(Mac));
+        Assert.Throws<EspFlashException>(() => EspFirmwareInstaller.Restore(rom, store, resetDelay: Zero));
+    }
+
+    [Fact]
+    public void BlankBoardAndCorruptBackup()
+    {
+        var rom = new FakeRom();
+        var store = TempStore();
+        Assert.Equal(EspFirmwareInstaller.BackupOutcome.Created, EspFirmwareInstaller.Install([1, 2, 3], rom, store, resetDelay: Zero));
+        Assert.True(store.Info(Mac)!.WasBlank);
+        Assert.Equal(2, rom.ReadCount);
+        var path = store.ImagePath(Mac);
+        var data = File.ReadAllBytes(path);
+        data[10] ^= 1;
+        File.WriteAllBytes(path, data);
+        Assert.Throws<EspFlashException>(() => EspFirmwareInstaller.Restore(rom, store, resetDelay: Zero));
+        Assert.Single(store.All());
     }
 }

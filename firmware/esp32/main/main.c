@@ -15,6 +15,7 @@
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gattc_api.h"
+#include "esp_gatt_common_api.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_system.h"

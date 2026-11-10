@@ -25,6 +25,11 @@
                 <Button Content="刷写固件" Click="OnFlash" IsEnabled="{Binding CanFlash}" Margin="0,0,8,0" />
                 <Button Content="不刷写，稍后再说" Click="OnSkip" />
             </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" Visibility="{Binding HasBackups, Converter={StaticResource BoolToVis}}">
+                <Button Content="还原原固件" Click="OnRestore" IsEnabled="{Binding NotBusy}" Margin="0,0,8,0" />
+                <Button Content="打开备份文件夹" Click="OnReveal" Margin="0,0,8,0" />
+                <TextBlock Text="{Binding BackupText}" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
             <!-- iPhone 连接 -->
             <StackPanel Margin="0,12,0,0" Visibility="{Binding ShowIphone, Converter={StaticResource BoolToVis}}">
                 <TextBlock Text="{Binding LinkText}" FontWeight="SemiBold" />
@@ -38,6 +43,6 @@
             </StackPanel>
         </StackPanel>
         <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                   Text="第一次使用先点“刷写固件”（约 30 秒）。已经刷写过的模块直接点“检测固件”。" />
+                   Text="第一次使用先点“刷写固件”。第一次刷写某块板子前会先自动备份板子上原有的固件（约 1~3 分钟），之后可以一键还原。已经刷写过的模块直接点“检测固件”。" />
     </StackPanel>
 </UserControl>

@@ -60,7 +60,9 @@ public enum EspRomCommand : byte
     FlashData = 0x03,
     FlashEnd = 0x04,
     Sync = 0x08,
+    ReadReg = 0x0A,
     SpiSetParams = 0x0B,
+    ReadFlashSlow = 0x0E,
     SpiAttach = 0x0D,
     ChangeBaudrate = 0x0F,
     SpiFlashMd5 = 0x13,
@@ -137,7 +139,8 @@ public sealed class EspFlashException(string message) : Exception(message)
     public static EspFlashException BadImage(string reason) => new($"固件文件无效：{reason}");
 }
 
-public enum EspFlashStage { Connecting, Erasing, Writing, Verifying, Done }
+/// <summary>BackingUp：读取原固件做备份</summary>
+public enum EspFlashStage { Connecting, BackingUp, Erasing, Writing, Verifying, Done }
 
 public sealed class EspFlasher(IEspSerialTransport port)
 {
@@ -150,10 +153,20 @@ public sealed class EspFlasher(IEspSerialTransport port)
     /// <summary>测试时设为 0 加快速度</summary>
     public TimeSpan ResetDelay { get; set; } = TimeSpan.FromMilliseconds(100);
 
+    public uint FlashSize { get; private set; } = 4u << 20;
+
+    /// <summary>刷写镜像到 offset（合并镜像从 0x1000 开始），完成后复位运行新固件。</summary>
     public void Flash(byte[] image, uint offset, int? fastBaud = 460_800, uint flashSize = 4u << 20)
     {
-        if (image.Length == 0) throw EspFlashException.BadImage("文件为空");
-        if (offset + (long)image.Length > flashSize) throw EspFlashException.BadImage("超过闪存大小");
+        Begin(fastBaud, flashSize);
+        Write(image, offset);
+        Finish();
+    }
+
+    /// <summary>进入下载模式、连接闪存、切换波特率。之后可以多次 Read/Write，最后 Finish。</summary>
+    public void Begin(int? fastBaud = 460_800, uint flashSize = 4u << 20)
+    {
+        FlashSize = flashSize;
         Stage?.Invoke(EspFlashStage.Connecting, 0);
         Connect();
         Command(EspRomCommand.SpiAttach, EspRomPacket.Le32(0, 0), "连接闪存");
@@ -167,6 +180,43 @@ public sealed class EspFlasher(IEspSerialTransport port)
             _decoder = new EspSlip.Decoder();
             _pending.Clear();
         }
+    }
+
+    /// <summary>读出芯片的出厂 MAC 地址（eFuse），用来区分不同的板子。</summary>
+    public string ReadMac()
+    {
+        uint w1 = Command(EspRomCommand.ReadReg, EspRomPacket.Le32(0x3FF5A004), "读取芯片地址").Value;
+        uint w2 = Command(EspRomCommand.ReadReg, EspRomPacket.Le32(0x3FF5A008), "读取芯片地址").Value;
+        byte[] b = [(byte)(w2 >> 8), (byte)w2, (byte)(w1 >> 24), (byte)(w1 >> 16), (byte)(w1 >> 8), (byte)w1];
+        return string.Join(":", b.Select(x => x.ToString("x2")));
+    }
+
+    /// <summary>读闪存（ROM 的慢速读取，每次 64 字节）。</summary>
+    public byte[] Read(uint offset, int length, Action<double>? progress = null)
+    {
+        var o = new byte[length];
+        int done = 0, lastReport = 0;
+        while (done < length)
+        {
+            int n = Math.Min(64, length - done);
+            var p = Command(EspRomCommand.ReadFlashSlow, EspRomPacket.Le32(offset + (uint)done, (uint)n), "读取闪存", TimeSpan.FromSeconds(2)).Payload;
+            if (p.Length < n) throw EspFlashException.Rom("读取闪存", 0xFE);
+            Array.Copy(p, 0, o, done, n);
+            done += n;
+            if (done - lastReport >= 16384 || done == length)
+            {
+                lastReport = done;
+                progress?.Invoke(done / (double)length);
+            }
+        }
+        return o;
+    }
+
+    /// <summary>擦除并写入一段镜像，写完用 MD5 校验。</summary>
+    public void Write(byte[] image, uint offset)
+    {
+        if (image.Length == 0) throw EspFlashException.BadImage("文件为空");
+        if (offset + (long)image.Length > FlashSize) throw EspFlashException.BadImage("超过闪存大小");
         int block = EspRomPacket.FlashBlockSize;
         int blocks = (image.Length + block - 1) / block;
         Stage?.Invoke(EspFlashStage.Erasing, 0);
@@ -183,17 +233,27 @@ public sealed class EspFlasher(IEspSerialTransport port)
             Stage?.Invoke(EspFlashStage.Writing, (seq + 1) / (double)blocks);
         }
         Stage?.Invoke(EspFlashStage.Verifying, 1);
-        var md5 = Command(EspRomCommand.SpiFlashMd5, EspRomPacket.Le32(offset, (uint)image.Length, 0, 0), "校验",
-            TimeSpan.FromSeconds(Math.Max(8, image.Length / 1_000_000.0 * 10)));
-        var expected = Convert.ToHexStringLower(MD5.HashData(image));
-        var p = md5.Payload;
-        var got = p.Length switch
+        if (Md5(offset, image.Length) != Md5Hex(image)) throw EspFlashException.VerifyFailed();
+    }
+
+    public static string Md5Hex(ReadOnlySpan<byte> data) => Convert.ToHexStringLower(MD5.HashData(data));
+
+    /// <summary>闪存一段区域的 MD5（芯片内计算）</summary>
+    public string Md5(uint offset, int length)
+    {
+        var p = Command(EspRomCommand.SpiFlashMd5, EspRomPacket.Le32(offset, (uint)length, 0, 0), "校验",
+            TimeSpan.FromSeconds(Math.Max(8, length / 1_000_000.0 * 10))).Payload;
+        return p.Length switch
         {
             32 => Encoding.ASCII.GetString(p).ToLowerInvariant(),
             16 => Convert.ToHexStringLower(p),
             _ => throw EspFlashException.VerifyFailed(),
         };
-        if (got != expected) throw EspFlashException.VerifyFailed();
+    }
+
+    /// <summary>退出下载模式，再用 RTS 硬复位运行固件。</summary>
+    public void Finish()
+    {
         try { Command(EspRomCommand.FlashEnd, EspRomPacket.Le32(1), "结束", TimeSpan.FromSeconds(2)); } catch (EspFlashException) { }
         HardReset();
         Stage?.Invoke(EspFlashStage.Done, 1);

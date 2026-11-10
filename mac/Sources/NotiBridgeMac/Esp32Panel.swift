@@ -1,3 +1,4 @@
+import AppKit
 import NotiBridgeCore
 import SwiftUI
 
@@ -36,10 +37,13 @@ struct Esp32Panel: View {
                 }
             }
             firmwareStatus
+            if !esp.backups.isEmpty {
+                backupRow
+            }
             if case .found = esp.firmware, esp.mode == .esp32 {
                 iphoneStatus
             }
-            Text("第一次使用先点“刷写固件”（约 30 秒）。已经刷写过的模块直接点“检测固件”。")
+            Text("第一次使用先点“刷写固件”。第一次刷写某块板子前会先自动备份板子上原有的固件（约 1~3 分钟），之后可以一键还原。已经刷写过的模块直接点“检测固件”。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -77,6 +81,24 @@ struct Esp32Panel: View {
         default:
             EmptyView()
         }
+    }
+
+    private var backupRow: some View {
+        HStack(spacing: 10) {
+            Button("还原原固件") { confirmRestore() }
+                .disabled(esp.selected.isEmpty || flashing || esp.firmware == .checking)
+            Button("打开备份文件夹") { esp.revealBackups() }
+            Text("已备份 \(esp.backups.count) 块板子的原固件").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func confirmRestore() {
+        let alert = NSAlert()
+        alert.messageText = "还原原固件？"
+        alert.informativeText = "会把这块板子恢复成第一次刷写 NotiBridge 之前的样子，iPhone 配对也会一起清除。备份文件会保留，之后还可以再刷写 NotiBridge。"
+        alert.addButton(withTitle: "还原")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn { esp.restoreOriginal() }
     }
 
     @ViewBuilder private var iphoneStatus: some View {

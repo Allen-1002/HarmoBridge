@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import IOKit
 import IOKit.serial
@@ -134,45 +135,93 @@ final class Esp32Manager: ObservableObject {
         return false
     }
 
-    /// 刷写随 App 打包的固件（ESP32 ROM 下载协议，不需要 esptool）。
+    /// 原固件备份（不在 App 数据目录里，“清除所有数据”和卸载都不会删掉）
+    static let backupStore = EspBackupStore(directory: FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("NotiBridge ESP32 Backups", isDirectory: true))
+    @Published var backups: [EspBackupInfo] = Esp32Manager.backupStore.all()
+
+    private static func stageText(_ stage: EspFlasher.Stage, restoring: Bool) -> (String, Double) {
+        switch stage {
+        case .connecting: return ("正在进入下载模式…", 0)
+        case let .backingUp(v): return ("正在备份原固件 \(Int(v * 100))%（只在第一次刷写时备份）", v)
+        case .erasing: return ("正在擦除…", 0)
+        case let .writing(v): return ("正在\(restoring ? "还原" : "写入") \(Int(v * 100))%", v)
+        case .verifying: return ("正在校验…", 1)
+        case .done: return ("完成", 1)
+        }
+    }
+
+    /// 刷写随 App 打包的固件（ESP32 ROM 下载协议，不需要 esptool）。第一次刷写某块板子前自动备份原固件。
     func flash() {
         guard let url = Self.firmwareURL, let data = try? Data(contentsOf: url) else {
             message = "这个版本的 NotiBridge 没有附带 ESP32 固件。"
             return
         }
+        onLog?("开始刷写 ESP32 固件 \(Self.bundledVersion)（\(data.count / 1024) KB）")
+        runOnBoard(restoring: false) { port, onStage, log in
+            let outcome = try EspFirmwareInstaller.install(image: [UInt8](data), port: port, store: Self.backupStore,
+                                                           onStage: onStage, log: log)
+            switch outcome {
+            case .created: return "ESP32 固件刷写完成，原固件已备份，可以随时还原"
+            case .kept: return "ESP32 固件刷写完成（原固件备份已存在，保留不动）"
+            case .alreadyNotiBridge: return "ESP32 固件刷写完成（板子上原本就是 NotiBridge 固件，没有可备份的原固件）"
+            }
+        }
+    }
+
+    /// 把板子还原为第一次刷写 NotiBridge 之前的原固件。
+    func restoreOriginal() {
+        onLog?("开始还原 ESP32 原固件")
+        runOnBoard(restoring: true) { port, onStage, log in
+            let info = try EspFirmwareInstaller.restore(port: port, store: Self.backupStore, onStage: onStage, log: log)
+            let f = DateFormatter()
+            f.dateStyle = .medium
+            f.timeStyle = .short
+            return "已还原为原固件（备份于 \(f.string(from: info.createdAt))）"
+        }
+    }
+
+    func revealBackups() {
+        try? FileManager.default.createDirectory(at: Self.backupStore.directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(Self.backupStore.directory)
+    }
+
+    private func runOnBoard(restoring: Bool,
+                            _ work: @escaping (PosixSerialPort, @escaping (EspFlasher.Stage) -> Void,
+                                               @escaping (String) -> Void) throws -> String) {
         guard !selected.isEmpty else { return }
         let path = selected
         stopLink()
         firmware = .flashing("正在进入下载模式…", 0)
-        onLog?("开始刷写 ESP32 固件 \(Self.bundledVersion)（\(data.count / 1024) KB）")
+        let log: (String) -> Void = { s in DispatchQueue.main.async { MainActor.assumeIsolated { self.onLog?(s) } } }
         DispatchQueue.global(qos: .userInitiated).async {
-            let result: Result<Void, Error> = Result {
+            let result: Result<String, Error> = Result {
                 let port = try PosixSerialPort(path: path)
                 defer { port.close() }
-                let f = EspFlasher(port: port)
-                f.onStage = { stage in
-                    let (text, p): (String, Double) = switch stage {
-                    case .connecting: ("正在进入下载模式…", 0)
-                    case .erasing: ("正在擦除…", 0)
-                    case let .writing(v): ("正在写入 \(Int(v * 100))%", v)
-                    case .verifying: ("正在校验…", 1)
-                    case .done: ("完成", 1)
-                    }
+                return try work(port, { stage in
+                    let (text, p) = Self.stageText(stage, restoring: restoring)
                     DispatchQueue.main.async { MainActor.assumeIsolated { self.firmware = .flashing(text, p) } }
-                }
-                try f.flash(image: [UInt8](data), offset: Self.firmwareOffset)
+                }, log)
             }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    self.backups = Self.backupStore.all()
                     switch result {
-                    case .success:
-                        self.onLog?("ESP32 固件刷写完成")
-                        // 等固件启动后检测
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.checkFirmware() }
+                    case let .success(text):
+                        self.onLog?(text)
+                        self.message = text
+                        if restoring {
+                            // 原固件不是 NotiBridge：不再自动连接，直到重新检测或刷写
+                            self.firmware = .unknown
+                        } else {
+                            // 等固件启动后检测
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.checkFirmware() }
+                        }
                     case let .failure(e):
                         let text = String(describing: e)
                         self.firmware = .flashFailed(text)
-                        self.onLog?("ESP32 刷写失败：\(text)")
+                        self.onLog?("ESP32 \(restoring ? "还原" : "刷写")失败：\(text)")
                     }
                 }
             }
