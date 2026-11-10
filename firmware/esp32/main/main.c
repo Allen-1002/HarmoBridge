@@ -66,6 +66,7 @@ static esp_ble_addr_type_t g_peer_addr_type;
 static uint16_t g_conn_id;
 static esp_bd_addr_t g_peer;
 static int64_t g_connected_at;
+static int64_t g_auth_early_at; // 连接事件之前就收到的加密完成
 static uint16_t g_svc_start, g_svc_end;
 static uint16_t h_ns, h_cp, h_ds;
 static int g_search_retries;
@@ -115,7 +116,10 @@ static void fmt_bda(const uint8_t *b, char *out) {
     sprintf(out, "%02x:%02x:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3], b[4], b[5]);
 }
 
-static int bond_count(void) { return esp_ble_get_bond_device_num(); }
+static int bond_count(void) {
+    int n = esp_ble_get_bond_device_num();
+    return n < 0 ? 0 : n;
+}
 
 static bool pairing_allowed(void) {
     return bond_count() == 0 || (g_pairing_until > 0 && esp_timer_get_time() < g_pairing_until);
@@ -416,8 +420,13 @@ static void gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) 
     }
     case ESP_GAP_BLE_AUTH_CMPL_EVT:
         if (param->ble_security.auth_cmpl.success) {
-            g_encrypted = true;
             g_pairing_until = 0; // 配对成功后关闭窗口
+            if (!g_connected) {
+                // 加密完成事件有时比 GATT 的连接事件先到（iPhone 重连时自己发起加密）：记下来，连接事件里接上
+                g_auth_early_at = esp_timer_get_time();
+                break;
+            }
+            g_encrypted = true;
             emit_state();
             start_discovery();
         } else {
@@ -466,7 +475,13 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
             esp_ble_gattc_enh_open(g_gattc_if, &cp);
         }
         // 已绑定的 iPhone 用保存的密钥直接加密；新 iPhone 会进入配对（SEC_REQ_EVT 里决定是否接受）
-        esp_ble_set_encryption(g_peer, ESP_BLE_SEC_ENCRYPT_NO_MITM);
+        if (g_auth_early_at > 0 && esp_timer_get_time() - g_auth_early_at < 5000000) {
+            g_auth_early_at = 0;
+            g_encrypted = true;
+            emit_state();
+        } else {
+            esp_ble_set_encryption(g_peer, ESP_BLE_SEC_ENCRYPT_NO_MITM);
+        }
         break;
     case ESP_GATTC_OPEN_EVT:
         if (param->open.status == ESP_GATT_OK) {
