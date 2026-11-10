@@ -125,7 +125,7 @@
                     <!-- 要不要通话（只有安卓 / 鸿蒙时） -->
                     <StackPanel x:Name="ObCalls" Visibility="Collapsed">
                         <TextBlock TextWrapping="Wrap" FontSize="14" Margin="0,0,0,16"
-                                   Text="通知同步不需要额外硬件。接打电话需要一块 ESP32 模块，手机在蓝牙设置里和“NotiBridge 通话”配对，电脑就像一个蓝牙耳机。通话功能即将支持。" />
+                                   Text="通知同步不需要额外硬件。接打电话需要一块 ESP32 模块，手机在蓝牙设置里和“NotiBridge 通话”配对，电脑就像一个蓝牙耳机。" />
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <RadioButton GroupName="Calls" IsChecked="{Binding Esp32.UseSoftware}" FontWeight="SemiBold" Content="不需要，只同步通知（推荐）" />
@@ -326,7 +326,7 @@
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                                                     <TextBlock Text="{Binding StatusText}" Style="{StaticResource Hint}" />
-                                                    <TextBlock Text="通知 ✓  ·  通话 即将支持" Style="{StaticResource Hint}" FontSize="11" />
+                                                    <TextBlock Text="通知 ✓" Style="{StaticResource Hint}" FontSize="11" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                                     <Button Content="改名" Click="OnRename" Tag="{Binding}" Margin="0,0,8,0" />
@@ -456,7 +456,7 @@
                                 <TextBlock TextWrapping="Wrap" FontSize="14"
                                            Text="一块几十元的 ESP32 开发板，插在电脑 USB 上，由 NotiBridge 一键刷写固件。启用后在纯软件的基础上增加：" />
                                 <TextBlock TextWrapping="Wrap" Margin="0,10,0,0" Text="•  iPhone 通知：iPhone 在蓝牙设置里和 ESP32 配对，不用装 App" />
-                                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Text="•  通话：所有手机都能在电脑上接打电话（即将支持）" />
+                                <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Text="•  通话：所有手机都能在电脑上接打电话" />
                                 <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,10,0,0"
                                            Text="推荐带 USB 串口芯片（CH340 / CP210x）的 ESP32-WROOM-32 开发板。安卓、鸿蒙手机的通知照常通过局域网同步。" />
                                 <Button Content="启用 ESP32 模式" Click="OnEnableEsp32" HorizontalAlignment="Left" Padding="16,8" Margin="0,12,0,0"
@@ -527,7 +527,7 @@
                             <StackPanel>
                                 <TextBlock Text="使用方式" FontWeight="SemiBold" />
                                 <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseSoftware}" Content="纯软件：安卓、鸿蒙手机的通知" Margin="0,8,0,0" />
-                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseEsp32}" Content="ESP32 模式：再加 iPhone 通知，以及通话（即将支持）" Margin="0,4,0,0" />
+                                <RadioButton GroupName="UseModeSettings" IsChecked="{Binding Esp32.UseEsp32}" Content="ESP32 模式：再加 iPhone 通知，以及在电脑上接打电话" Margin="0,4,0,0" />
                                 <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0" Text="板子、固件和 iPhone 在侧边栏“ESP32 模块”里管理。" />
                             </StackPanel>
                         </Border>

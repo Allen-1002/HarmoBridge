@@ -15,7 +15,7 @@ enum UseMode: String, CaseIterable, Identifiable {
     var detail: String {
         self == .software
             ? "同步通知、验证码自动复制，不需要任何额外硬件。不能接打电话。"
-            : "需要一块 ESP32 模块插在 Mac 的 USB 上，由 NotiBridge 刷写固件。iPhone 通过蓝牙把通知交给 ESP32，再转到 Mac；以后还会支持在 Mac 上接打电话（开发中）。"
+            : "需要一块 ESP32 模块插在 Mac 的 USB 上，由 NotiBridge 刷写固件。iPhone 通过蓝牙把通知交给 ESP32，再转到 Mac；手机和“NotiBridge 通话”配对后，还可以在 Mac 上接打电话。"
     }
 }
 
@@ -472,6 +472,9 @@ final class Esp32Manager: ObservableObject {
     nonisolated static func trace(_ s: String) {
         let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/NotiBridge")
         let f = dir.appendingPathComponent("serial-trace.log")
+        if let size = (try? FileManager.default.attributesOfItem(atPath: f.path)[.size]) as? Int, size > 2_000_000 {
+            try? FileManager.default.removeItem(at: f)
+        }
         let line = "\(ISO8601DateFormatter().string(from: Date())) \(s)\n"
         if let h = try? FileHandle(forWritingTo: f) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
         else { try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true); try? Data(line.utf8).write(to: f) }
@@ -510,7 +513,7 @@ final class Esp32Manager: ObservableObject {
                     let bytes = try port.read(timeout: 0.2)
                     if !bytes.isEmpty { lastRx = Date() }
                     rxBytes += bytes.count
-                    if Date().timeIntervalSince(lastTrace) > 1 && baud != 115_200 {
+                    if Date().timeIntervalSince(lastTrace) > 1 && baud != 115_200 && callAudio != nil {
                         Self.trace("1 秒内收到 \(rxBytes) 字节、\(rxFrames) 帧、\(rxLines) 行；上行已发 \(upSeq) 帧")
                         rxBytes = 0; rxFrames = 0; rxLines = 0; lastTrace = Date()
                     }
@@ -521,7 +524,7 @@ final class Esp32Manager: ObservableObject {
                             if f.type == SerialFrameType.audioDown.rawValue { callAudio?.receive(f.data) }
                         case let .line(line):
                             rxLines += 1
-                            if !line.hasPrefix("@{") && !line.hasPrefix("HB-") && baud != 115_200 { Self.trace("非协议行：\(line.prefix(80).debugDescription)") }
+                            if !line.hasPrefix("@{") && !line.hasPrefix("HB-") && baud != 115_200 && callAudio != nil { Self.trace("非协议行：\(line.prefix(80).debugDescription)") }
                             if line.hasPrefix("@{") || line.hasPrefix("HB-ESP32") { lastValid = Date() }
                             if line.hasPrefix("@{\"t\":\"boot\"") {
                                 DispatchQueue.main.async { MainActor.assumeIsolated { self.onLog?("ESP32 重新启动了：\(line.dropFirst())") } }

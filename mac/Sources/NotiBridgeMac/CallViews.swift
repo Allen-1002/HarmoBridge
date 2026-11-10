@@ -107,6 +107,7 @@ struct DialBox: View {
     @ObservedObject var contacts: ContactsDirectory
     let recent: [String]
     let dial: (String) -> Void
+    @State private var showList = false
 
     private var suggestions: [ContactEntry] {
         let q = number.trimmingCharacters(in: .whitespaces)
@@ -123,6 +124,15 @@ struct DialBox: View {
                     .frame(maxWidth: 220)
                     .onSubmit { submit() }
                 Button("拨打") { submit() }.disabled(target == nil)
+                Button { showList = true } label: { Label("联系人", systemImage: "person.crop.circle") }
+                    .disabled(!contacts.authorized)
+                    .popover(isPresented: $showList, arrowEdge: .bottom) {
+                        ContactPicker(contacts: contacts) { e in
+                            showList = false
+                            number = e.number
+                            dial(e.number)
+                        }
+                    }
             }
             ForEach(suggestions) { e in
                 Button {
@@ -156,4 +166,43 @@ struct DialBox: View {
     }
 
     private func submit() { if let t = target { dial(t) } }
+}
+
+/// 完整的联系人列表：按名字排序，顶部可以筛选，点一下拨号
+struct ContactPicker: View {
+    @ObservedObject var contacts: ContactsDirectory
+    let pick: (ContactEntry) -> Void
+    @State private var filter = ""
+
+    private var list: [ContactEntry] {
+        let all = contacts.index.entries.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        let q = filter.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? all : contacts.index.search(q, limit: 500)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            TextField("筛选", text: $filter).textFieldStyle(.roundedBorder)
+            if list.isEmpty {
+                Text("没有联系人").foregroundStyle(.secondary).frame(maxHeight: .infinity)
+            } else {
+                List(list) { e in
+                    Button { pick(e) } label: {
+                        HStack {
+                            Text(e.name)
+                            Spacer()
+                            Text(e.number).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .padding(10)
+        .frame(width: 320, height: 420)
+    }
 }

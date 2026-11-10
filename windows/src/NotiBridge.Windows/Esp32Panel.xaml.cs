@@ -167,6 +167,22 @@ public partial class Esp32Panel : UserControl
         ContactsInfo.Text = app.Contacts.Count > 0 ? $"已导入 {app.Contacts.Count} 个号码（保存在这台电脑上）" : "导入手机导出的 .vcf 或 CSV 后，来电和拨号可以显示联系人名字";
     }
 
+    private void OnPickContact(object sender, RoutedEventArgs e)
+    {
+        if (App is not { } app) return;
+        if (app.Contacts.Count == 0)
+        {
+            MessageBox.Show("还没有联系人：先点“导入联系人…”导入手机导出的 .vcf 或 CSV 文件。", "选择联系人");
+            return;
+        }
+        var w = new ContactPickerWindow(app.Contacts) { Owner = Window.GetWindow(this) };
+        if (w.ShowDialog() == true && w.Picked is { } c)
+        {
+            DialBox.Text = c.Number;
+            Esp?.Dial(c.Number);
+        }
+    }
+
     private void OnDialSuggestion(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string n }) { DialBox.Text = n; Esp?.Dial(n); }

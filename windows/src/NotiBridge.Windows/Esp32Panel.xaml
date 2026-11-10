@@ -83,7 +83,8 @@
                         <TextBox x:Name="DialBox" Width="180" Margin="0,0,8,0" KeyDown="OnDialKey" TextChanged="OnDialChanged"
                                  ToolTip="输入名字或号码" />
                         <Button Content="拨打" Click="OnDial" Margin="0,0,8,0" />
-                        <Button Content="重拨" Click="OnRedial" />
+                        <Button Content="重拨" Click="OnRedial" Margin="0,0,8,0" />
+                        <Button Content="联系人…" Click="OnPickContact" />
                     </StackPanel>
                     <!-- 匹配的联系人；输入框空着时是最近通话 -->
                     <ItemsControl x:Name="DialSuggestions" Margin="0,4,0,0">

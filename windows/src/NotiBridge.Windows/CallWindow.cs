@@ -263,3 +263,54 @@ public sealed class CallWindow : Window
         }
     }
 }
+
+/// <summary>完整的联系人列表：按名字排序、顶部筛选，双击或点“拨打”拨号</summary>
+public sealed class ContactPickerWindow : Window
+{
+    private readonly ContactsStore _contacts;
+    private readonly TextBox _filter = new() { Margin = new Thickness(0, 0, 0, 8) };
+    private readonly ListBox _list = new();
+    public ContactEntry? Picked { get; private set; }
+
+    public ContactPickerWindow(ContactsStore contacts)
+    {
+        _contacts = contacts;
+        Title = "选择联系人";
+        Width = 360;
+        Height = 480;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ShowInTaskbar = false;
+        var dial = new Button { Content = "拨打", Padding = new Thickness(16, 4, 16, 4), HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0), IsDefault = true };
+        dial.Click += (_, _) => Pick();
+        _list.MouseDoubleClick += (_, _) => Pick();
+        _filter.TextChanged += (_, _) => Refresh();
+        var root = new DockPanel { Margin = new Thickness(12) };
+        DockPanel.SetDock(_filter, Dock.Top);
+        DockPanel.SetDock(dial, Dock.Bottom);
+        root.Children.Add(_filter);
+        root.Children.Add(dial);
+        root.Children.Add(_list);
+        Content = root;
+        Loaded += (_, _) => _filter.Focus();
+        Refresh();
+    }
+
+    private void Refresh()
+    {
+        var q = _filter.Text.Trim();
+        var items = q.Length == 0
+            ? _contacts.Index.Entries.OrderBy(e => e.Name, StringComparer.CurrentCulture).ToList()
+            : _contacts.Index.Search(q, 500);
+        _list.ItemsSource = items.Select(e => new ListBoxItem { Content = $"{e.Name}    {e.Number}", Tag = e }).ToList();
+        if (_list.Items.Count > 0) _list.SelectedIndex = 0;
+    }
+
+    private void Pick()
+    {
+        if (_list.SelectedItem is ListBoxItem { Tag: ContactEntry e })
+        {
+            Picked = e;
+            DialogResult = true;
+        }
+    }
+}

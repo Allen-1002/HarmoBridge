@@ -112,10 +112,10 @@ public partial class MainWindow : Window
     {
         IReadOnlyList<PairedIphone> iphones = _model.Esp32.UseEsp32 ? _model.Esp32.Iphones : [];
         IphoneDevices.ItemsSource = iphones.Select(p => new IphoneRow(p.Id, IphoneDisplay.Name(p), "经 ESP32 · " + IphoneDisplay.Status(p),
-            p.AncsReady ? "通知 ✓  ·  通话 即将支持" : "通知 未就绪  ·  通话 即将支持")).ToList();
+            p.AncsReady ? "通知 ✓" : "通知 未就绪")).ToList();
         NoDevicesHint.Visibility = _model.HasDevices ? Visibility.Collapsed : Visibility.Visible;
         DevicesFooter.Text = _model.Esp32.UseEsp32
-            ? "安卓、鸿蒙手机通过局域网同步通知；iPhone 通过 ESP32 模块同步通知。通话功能即将支持。手机 App 不在前台时由系统按需连接转发，所以“待命”不等于收不到通知。"
+            ? "安卓、鸿蒙手机通过局域网同步通知；iPhone 通过 ESP32 模块同步通知。接打电话：手机在蓝牙设置里和“NotiBridge 通话”配对。手机 App 不在前台时由系统按需连接转发，所以“待命”不等于收不到通知。"
             : "纯软件模式支持安卓、鸿蒙手机的通知。想同步 iPhone 通知或在电脑上接打电话，请在“ESP32 模块”里启用 ESP32 模式。";
         AddIphoneHint.Text = _model.Esp32.UseEsp32
             ? "不用装 App：iPhone 在蓝牙设置里和 ESP32 模块配对。"

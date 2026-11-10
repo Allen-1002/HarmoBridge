@@ -44,7 +44,7 @@ struct DevicesView: View {
                 Text("我的设备")
             } footer: {
                 Text(model.esp32.mode == .esp32
-                     ? "安卓、鸿蒙手机通过局域网同步通知；iPhone 通过 ESP32 模块同步通知。通话功能即将支持。"
+                     ? "安卓、鸿蒙手机通过局域网同步通知；iPhone 通过 ESP32 模块同步通知。接打电话：手机在蓝牙设置里和“NotiBridge 通话”配对。"
                      : "纯软件模式支持安卓、鸿蒙手机的通知。想同步 iPhone 通知或在电脑上接打电话，请在“ESP32 模块”里启用 ESP32 模式。")
             }
         }
@@ -144,7 +144,7 @@ struct DeviceRow<Actions: View>: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 6) {
                     CapabilityChip(title: "通知", state: notifyReady ? "✓" : "未就绪", on: notifyReady)
-                    CapabilityChip(title: "通话", state: "即将支持", on: false)
+                    CapabilityChip(title: "通话", state: "经 ESP32", on: false)
                 }
             }
             Spacer()
@@ -452,7 +452,7 @@ struct Esp32Page: View {
                         Text("一块几十元的 ESP32 开发板，插在电脑 USB 上，由 NotiBridge 一键刷写固件。启用后在纯软件的基础上增加：")
                             .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Label("iPhone 通知：iPhone 在蓝牙设置里和 ESP32 配对，不用装 App", systemImage: "apple.logo")
-                        Label("通话：所有手机都能在电脑上接打电话（即将支持）", systemImage: "phone")
+                        Label("通话：所有手机都能在电脑上接打电话", systemImage: "phone")
                         Text("推荐带 USB 串口芯片（CH340 / CP210x）的 ESP32-WROOM-32 开发板。安卓、鸿蒙手机的通知照常通过局域网同步。")
                             .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         Button("启用 ESP32 模式") { esp.mode = .esp32 }.hbGlassButton(prominent: true)
@@ -474,6 +474,6 @@ extension UseMode {
     var summary: String {
         self == .software
             ? "同步安卓、鸿蒙手机的通知，验证码自动复制。不需要额外硬件。"
-            : "在纯软件的基础上，增加 iPhone 通知（经 ESP32 模块），以及所有手机在电脑上接打电话（即将支持）。需要一块插在电脑 USB 上的 ESP32 模块。"
+            : "在纯软件的基础上，增加 iPhone 通知（经 ESP32 模块），以及所有手机在电脑上接打电话。需要一块插在电脑 USB 上的 ESP32 模块。"
     }
 }

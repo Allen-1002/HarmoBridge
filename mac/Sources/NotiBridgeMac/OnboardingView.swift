@@ -148,7 +148,7 @@ struct OnboardingView: View {
 
     private var callChoice: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("通知同步不需要额外硬件。接打电话需要一块 ESP32 模块，手机在蓝牙设置里和“NotiBridge 通话”配对，电脑就像一个蓝牙耳机。通话功能即将支持。")
+            Text("通知同步不需要额外硬件。接打电话需要一块 ESP32 模块，手机在蓝牙设置里和“NotiBridge 通话”配对，电脑就像一个蓝牙耳机。")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             KindOption(icon: "bell.badge.fill", color: .blue, title: "不需要，只同步通知（推荐）",
                        detail: "纯软件，不需要额外硬件。", selected: model.esp32.mode == .software) {
@@ -229,7 +229,7 @@ struct OnboardingView: View {
             if model.esp32.mode == .esp32 {
                 PermissionRow(
                     icon: "mic.fill", color: .pink, title: "麦克风", tag: "可选",
-                    reason: "仅用于 ESP32 模式的通话功能（即将支持），在 Mac 上接打电话时使用。现在可以先不开。",
+                    reason: "ESP32 模式下在 Mac 上接打电话时作为话筒。不打电话可以先不开。",
                     status: perms.microphone,
                     action: ("允许", { perms.requestMicrophone() }),
                     settings: { perms.openSystemSettings("com.apple.preference.security?Privacy_Microphone") })
