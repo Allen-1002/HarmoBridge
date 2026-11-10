@@ -1,21 +1,54 @@
 import AppKit
 import SwiftUI
 
-/// Mac 端首次启动引导：欢迎 → 选择使用方式（纯软件 / ESP32）→ 一次性申请所需权限 → [ESP32 检测与刷写] → 添加第一台设备 → 完成。
+/// 引导里“你用什么手机”的选择
+enum OnboardingPhones: String, CaseIterable, Identifiable {
+    case iphone, android, both
+    var id: String { rawValue }
+}
+
+/// Mac 端首次启动引导：欢迎 → 你用什么手机 → [安卓 / 鸿蒙：要不要通话] → 一次性申请所需权限
+/// → [需要 ESP32 时：检测与刷写] → 添加第一台设备 → 完成。
+/// 使用方式由前两步推出：有 iPhone 或要通话 → ESP32 模式，否则纯软件。
 struct OnboardingView: View {
     @EnvironmentObject var model: AppModel
     @StateObject private var perms = PermissionCenter()
     @State private var step = 0
+    @AppStorage("onboardingPhones") private var phonesRaw = ""
 
-    private let titles = ["欢迎使用 NotiBridge", "选择使用方式", "授予所需权限", "连接 ESP32 模块", "添加第一台设备", "设置完成"]
-    // 步骤编号
-    private let stepMode = 1, stepPerms = 2, stepEsp = 3, stepPair = 4
+    private enum Step { case welcome, phones, calls, perms, esp, pair, done }
+
+    private var phones: OnboardingPhones? { OnboardingPhones(rawValue: phonesRaw) }
+
+    /// 当前要走的步骤：随手机类型和是否需要通话变化
+    private var steps: [Step] {
+        var list: [Step] = [.welcome, .phones]
+        if phones == .android { list.append(.calls) }
+        list.append(.perms)
+        if model.esp32.mode == .esp32 { list.append(.esp) }
+        list += [.pair, .done]
+        return list
+    }
+
+    private var current: Step { steps[min(step, steps.count - 1)] }
+
+    private func title(_ s: Step) -> String {
+        switch s {
+        case .welcome: return "欢迎使用 NotiBridge"
+        case .phones: return "你用什么手机？"
+        case .calls: return "要在电脑上接打电话吗？"
+        case .perms: return "授予所需权限"
+        case .esp: return "连接 ESP32 模块"
+        case .pair: return "添加第一台设备"
+        case .done: return "设置完成"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // 步骤指示
             HStack(spacing: 6) {
-                ForEach(0..<titles.count, id: \.self) { i in
+                ForEach(0..<steps.count, id: \.self) { i in
                     Capsule()
                         .fill(i <= step ? Color.accentColor : Color.secondary.opacity(0.25))
                         .frame(width: i == step ? 28 : 8, height: 8)
@@ -28,14 +61,15 @@ struct OnboardingView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text(titles[step]).font(.system(size: 28, weight: .bold))
-                    switch step {
-                    case 0: welcome
-                    case stepMode: modeChoice
-                    case stepEsp: esp32Step
-                    case stepPerms: permissions
-                    case stepPair: pairing
-                    default: done
+                    Text(title(current)).font(.system(size: 28, weight: .bold))
+                    switch current {
+                    case .welcome: welcome
+                    case .phones: phoneChoice
+                    case .calls: callChoice
+                    case .perms: permissions
+                    case .esp: esp32Step
+                    case .pair: pairing
+                    case .done: done
                     }
                 }
                 .padding(32)
@@ -45,19 +79,16 @@ struct OnboardingView: View {
 
             Divider()
             HStack {
-                if step > 0 && step < titles.count - 1 {
-                    Button("上一步") {
-                        step -= 1
-                        if step == stepEsp && model.esp32.mode == .software { step -= 1 }
-                    }
+                if step > 0 && current != .done {
+                    Button("上一步") { step -= 1 }
                 }
                 Spacer()
-                if step == stepPair && !model.hasAnyDevice {
+                if current == .pair && !model.hasAnyDevice {
                     Button("稍后添加") { step += 1 }
                 }
                 Button(nextTitle) { next() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(step == stepPerms && !perms.requiredReady)
+                    .disabled((current == .perms && !perms.requiredReady) || (current == .phones && phones == nil))
                     .controlSize(.large)
             }
             .padding(.horizontal, 32)
@@ -70,36 +101,63 @@ struct OnboardingView: View {
     }
 
     private var nextTitle: String {
-        switch step {
-        case 0: return "开始设置"
-        case titles.count - 1: return "开始使用"
+        switch current {
+        case .welcome: return "开始设置"
+        case .done: return "开始使用"
+        case .esp where !firmwareReady: return "跳过"
         default: return "下一步"
         }
     }
 
+    /// ESP32 上已经有 NotiBridge 固件（没有时 ESP32 这一步的按钮显示“跳过”）
+    private var firmwareReady: Bool {
+        if case .found = model.esp32.firmware { return true }
+        return false
+    }
+
     private func next() {
-        if step == titles.count - 1 {
+        if current == .done {
             model.finishOnboarding()
             return
         }
         step += 1
-        // 纯软件模式跳过 ESP32 步骤
-        if step == stepEsp && model.esp32.mode == .software { step += 1 }
     }
 
     // MARK: - 步骤
 
-    private var modeChoice: some View {
+    private var phoneChoice: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("之后可以在 设置 里更改。手机上的 NotiBridge 不需要做选择。").foregroundStyle(.secondary)
-            ForEach(UseMode.allCases) { m in
-                KindOption(icon: m == .software ? "bell.badge.fill" : "cpu",
-                           color: m == .software ? .blue : .green,
-                           title: m == .software ? "纯软件（推荐）" : "ESP32 模式",
-                           detail: m.summary,
-                           selected: model.esp32.mode == m) {
-                    model.esp32.mode = m
-                }
+            Text("手机上的 NotiBridge 不需要做选择。之后可以在 设置 › 使用方式 里更改。").foregroundStyle(.secondary)
+            KindOption(icon: "apple.logo", color: .primary, title: "iPhone",
+                       detail: "iPhone 不能装通知转发 App，需要一块 ESP32 模块：iPhone 在蓝牙设置里和它配对，通知经 USB 转到这台 Mac。",
+                       selected: phones == .iphone) { choosePhones(.iphone) }
+            KindOption(icon: "iphone", color: .blue, title: "安卓 / 鸿蒙手机",
+                       detail: "在手机上安装 NotiBridge App，同一 Wi-Fi 下同步通知，不需要额外硬件。",
+                       selected: phones == .android) { choosePhones(.android) }
+            KindOption(icon: "iphone.and.arrow.forward", color: .green, title: "两种都有",
+                       detail: "安卓 / 鸿蒙手机走局域网，iPhone 走 ESP32 模块，两边的通知都会同步到这台 Mac。",
+                       selected: phones == .both) { choosePhones(.both) }
+        }
+    }
+
+    private func choosePhones(_ p: OnboardingPhones) {
+        phonesRaw = p.rawValue
+        // 有 iPhone 就必须用 ESP32；只有安卓 / 鸿蒙时由下一步“要不要通话”决定（默认不需要）
+        model.esp32.mode = p == .android ? .software : .esp32
+    }
+
+    private var callChoice: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("通知同步不需要额外硬件。接打电话需要一块 ESP32 模块，手机在蓝牙设置里和“NotiBridge 通话”配对，电脑就像一个蓝牙耳机。通话功能即将支持。")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            KindOption(icon: "bell.badge.fill", color: .blue, title: "不需要，只同步通知（推荐）",
+                       detail: "纯软件，不需要额外硬件。", selected: model.esp32.mode == .software) {
+                model.esp32.mode = .software
+            }
+            KindOption(icon: "phone.fill", color: .green, title: "需要，使用 ESP32 模块",
+                       detail: "下一步会检测 ESP32 并刷写固件，也可以先跳过，之后在“ESP32 模块”里完成。",
+                       selected: model.esp32.mode == .esp32) {
+                model.esp32.mode = .esp32
             }
         }
     }
@@ -182,7 +240,7 @@ struct OnboardingView: View {
     private var pairing: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("之后可以随时在“设备与配对”里继续添加。").foregroundStyle(.secondary)
-            AddDeviceFlow(esp: model.esp32, initialKind: model.esp32.mode == .esp32 ? .iphone : .phoneApp)
+            AddDeviceFlow(esp: model.esp32, initialKind: phones == .iphone ? .iphone : phones == .android ? .phoneApp : nil)
         }
     }
 
