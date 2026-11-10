@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import NotiBridgeCore
 
 /// 通话声音在 Mac 上播放和采集。
@@ -49,6 +50,49 @@ final class CallAudio {
     /// macOS 上麦克风和扬声器是不同设备时（例如 USB 声卡的麦克风 + Mac 扬声器），一个引擎只会跟着输入设备走，播放没声音。
     private var player: AVAudioEngine?
 
+    /// 系统默认的输入和输出是不是同一个音频设备
+    static func sameInputOutputDevice() -> Bool {
+        func device(_ selector: AudioObjectPropertySelector) -> AudioDeviceID {
+            var id = AudioDeviceID(0)
+            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                                  mElement: kAudioObjectPropertyElementMain)
+            AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id)
+            return id
+        }
+        let i = device(kAudioHardwarePropertyDefaultInputDevice)
+        let o = device(kAudioHardwarePropertyDefaultOutputDevice)
+        return i != 0 && i == o
+    }
+
+    /// 通话中切换了耳机/扬声器等设备：重建引擎
+    private var configObservers: [NSObjectProtocol] = []
+    private var restarting = false
+
+    private func observeConfigChanges() {
+        let nc = NotificationCenter.default
+        for e in [engine, player].compactMap({ $0 }) {
+            configObservers.append(nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: e, queue: .main) {
+                [weak self] _ in self?.restart()
+            })
+        }
+    }
+
+    private func restart() {
+        guard !restarting else { return }
+        restarting = true
+        defer { restarting = false }
+        configObservers.forEach(NotificationCenter.default.removeObserver)
+        configObservers = []
+        stopEngine()
+        do {
+            try start()
+            onLog?("音频设备变了，通话声音已切换到新的设备")
+        } catch {
+            onLog?("音频设备变了，重新打开失败：\(error.localizedDescription)")
+        }
+    }
+
     private func stopEngine() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -79,7 +123,8 @@ final class CallAudio {
             return noErr
         }
         sourceNode = source
-        let out = voiceProcessing ? engine : AVAudioEngine()
+        // 麦克风和扬声器是同一个设备（例如耳机）就共用一个引擎；不同设备才分开（两个引擎抢同一个设备时播放会没声音）
+        let out = voiceProcessing || Self.sameInputOutputDevice() ? engine : AVAudioEngine()
         player = out
         out.attach(source)
         out.connect(source, to: out.mainMixerNode, format: format)
@@ -98,6 +143,7 @@ final class CallAudio {
         engine.prepare()
         try engine.start()
         if sender == nil { startSender() }
+        observeConfigChanges()
         onLog?("通话声音已切到 Mac（\(sampleRate / 1000) kHz，\(voiceProcessing ? "系统回声消除已开启" : "未使用回声消除")，输入 \(Int(inFormat.sampleRate)) Hz × \(inFormat.channelCount)）")
     }
 
@@ -163,6 +209,8 @@ final class CallAudio {
     }
 
     func stop() {
+        configObservers.forEach(NotificationCenter.default.removeObserver)
+        configObservers = []
         sending = false
         sender = nil
         stopEngine()
