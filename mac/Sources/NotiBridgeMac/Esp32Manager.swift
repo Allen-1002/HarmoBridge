@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import IOKit
 import IOKit.serial
@@ -594,6 +595,17 @@ final class Esp32Manager: ObservableObject {
             if hfp?.audio != "off" && hfp != nil { onLog?("通话声音：\(hfp?.audio ?? "")，在\(hfp?.audioToPC == true ? "电脑" : "手机")上") }
             return
         }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.updateCallAudio() } }
+            }
+            return
+        case .denied, .restricted:
+            onLog?("没有麦克风权限：请在「系统设置 › 隐私与安全性 › 麦克风」里允许 NotiBridge")
+        default:
+            break
+        }
         let a = CallAudio(sampleRate: sr) { [weak self] pcm in self?.sendUp(pcm) }
         a.onLog = { [weak self] s in DispatchQueue.main.async { MainActor.assumeIsolated { self?.onLog?(s) } } }
         do {
@@ -670,7 +682,15 @@ final class Esp32Manager: ObservableObject {
 
     enum HandshakeError: Error { case reason(String) }
 
+    /// 刚断开连接时固件可能还在高波特率（3 秒后才退回 115200）：第一次没回应就等一会儿再试
     nonisolated static func handshake(path: String) -> Result<String, HandshakeError> {
+        let first = handshakeOnce(path: path)
+        if case .success = first { return first }
+        sleep(3)
+        return handshakeOnce(path: path)
+    }
+
+    nonisolated static func handshakeOnce(path: String) -> Result<String, HandshakeError> {
         let fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK)
         guard fd >= 0 else { return .failure(.reason("无法打开串口（可能被其他程序占用）")) }
         defer { close(fd) }

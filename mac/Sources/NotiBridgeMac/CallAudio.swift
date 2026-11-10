@@ -33,10 +33,33 @@ final class CallAudio {
         jitter.push(PCM16.samples(bytes))
     }
 
+    /// 先试系统回声消除；部分声卡组合（例如 USB 声卡只有输出、麦克风在另一个设备上）打不开时，退回普通模式
     func start() throws {
+        do {
+            try start(voiceProcessing: true)
+        } catch {
+            onLog?("系统回声消除打不开（\((error as NSError).code)），改用普通模式；建议戴耳机通话以免回声")
+            stopEngine()
+            try start(voiceProcessing: false)
+        }
+    }
+
+    private var sourceNode: AVAudioSourceNode?
+
+    private func stopEngine() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        if let n = sourceNode {
+            engine.detach(n)
+            sourceNode = nil
+        }
+        engine.reset()
+    }
+
+    private func start(voiceProcessing: Bool) throws {
         let input = engine.inputNode
-        // 打开系统语音处理：回声消除 + 降噪；它会同时作用在输出上，用于取回声参考
-        try input.setVoiceProcessingEnabled(true)
+        // 系统语音处理：回声消除 + 降噪；它会同时作用在输出上，用于取回声参考
+        if input.isVoiceProcessingEnabled != voiceProcessing { try input.setVoiceProcessingEnabled(voiceProcessing) }
 
         // 下行播放：按播放设备的节奏从抖动缓冲取数据
         let jitter = self.jitter
@@ -50,6 +73,7 @@ final class CallAudio {
             }
             return noErr
         }
+        sourceNode = source
         engine.attach(source)
         engine.connect(source, to: engine.mainMixerNode, format: format)
 
@@ -62,7 +86,7 @@ final class CallAudio {
         }
         engine.prepare()
         try engine.start()
-        onLog?("通话声音已切到 Mac（\(sampleRate / 1000) kHz，系统回声消除已开启）")
+        onLog?("通话声音已切到 Mac（\(sampleRate / 1000) kHz，\(voiceProcessing ? "系统回声消除已开启" : "未使用回声消除")，输入 \(Int(inFormat.sampleRate)) Hz × \(inFormat.channelCount)）")
     }
 
     private func captured(_ buffer: AVAudioPCMBuffer) {
@@ -95,8 +119,7 @@ final class CallAudio {
     }
 
     func stop() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        stopEngine()
         jitter.reset()
         if jitter.underruns > 0 || jitter.dropped > 0 {
             onLog?("通话声音统计：欠载 \(jitter.underruns) 次，丢弃 \(jitter.dropped) 个样本")
