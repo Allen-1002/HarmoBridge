@@ -427,3 +427,19 @@ final class FirmwareFeedTests: XCTestCase {
         XCTAssertThrowsError(try FirmwareFeed.verify(image: image, version: "1.2.2", sums: sums, signature: sig))
     }
 }
+
+/// 联网检查真实固件 Release（默认跳过）：HB_FIRMWARE_FEED=1 swift test --filter RealFirmwareFeed
+final class RealFirmwareFeedTests: XCTestCase {
+    func testDownloadAndVerifyLatestFirmware() async throws {
+        guard ProcessInfo.processInfo.environment["HB_FIRMWARE_FEED"] != nil else { throw XCTSkip("未设置 HB_FIRMWARE_FEED") }
+        var req = URLRequest(url: FirmwareFeed.releasesURL)
+        req.setValue(UpdateCore.userAgent, forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let fw = try XCTUnwrap(FirmwareFeed.latest(fromReleasesJSON: data))
+        let img = try await URLSession.shared.data(from: fw.image.browserDownloadURL).0
+        let sums = try await URLSession.shared.data(from: fw.sums.browserDownloadURL).0
+        let sig = try await URLSession.shared.data(from: fw.signature.browserDownloadURL).0
+        try FirmwareFeed.verify(image: img, version: fw.version, sums: sums, signature: sig)
+        print("固件 \(fw.version) \(img.count) 字节，签名校验通过")
+    }
+}
