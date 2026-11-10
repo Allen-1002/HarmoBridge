@@ -307,12 +307,22 @@ public sealed partial class Esp32Manager : ObservableObject
         }
         _linkThread = null;
         Link = null;
+        Iphones = [];
     }
 
     /// <summary>打开配对窗口（3 分钟），让新的 iPhone 配对</summary>
     public void PairNewIphone() => Send("PAIR");
     /// <summary>删除 ESP32 上保存的所有 iPhone 配对</summary>
     public void ForgetIphones() => Send("UNPAIR");
+    /// <summary>删除一台 iPhone 的配对（id 是 PairedIphone.Id）</summary>
+    public void ForgetIphone(string id)
+    {
+        if (System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")) Send($"UNPAIR {id}");
+    }
+
+    private IReadOnlyList<PairedIphone> _iphones = [];
+    /// <summary>ESP32 上配对过的 iPhone（固件 1.2.2 起逐台上报）</summary>
+    public IReadOnlyList<PairedIphone> Iphones { get => _iphones; private set => Set(ref _iphones, value); }
     /// <summary>在 iPhone 上执行通知的操作（正向如接听，负向如清除/拒接）</summary>
     public void Perform(uint uid, bool positive) => Send($"ACT {uid} {(positive ? 0 : 1)}");
 
@@ -340,7 +350,7 @@ public sealed partial class Esp32Manager : ObservableObject
                     _linkPort = port;
                 }
                 Thread.Sleep(300);
-                port.Write(Encoding.ASCII.GetBytes("HB?\nSTATE?\n"));
+                port.Write(Encoding.ASCII.GetBytes("HB?\nSTATE?\nBONDS?\n"));
                 announced = "";
                 ui(() => { _linkError = ""; Raise(nameof(LinkText)); });
                 var splitter = new LineSplitter();
@@ -391,6 +401,9 @@ public sealed partial class Esp32Manager : ObservableObject
         {
             case Esp32Event.Hello h:
                 SetFound(h.Version);
+                break;
+            case Esp32Event.Bonds b:
+                Iphones = b.List;
                 break;
             case Esp32Event.State s:
                 if (s.Link.Ready) _iphoneProblem = "";

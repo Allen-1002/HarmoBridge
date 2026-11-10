@@ -71,6 +71,8 @@ final class Esp32Manager: ObservableObject {
     /// 与固件的连接（nil 表示未连接）
     @Published var link: Esp32LinkState?
     @Published var linkError = ""
+    /// ESP32 上配对过的 iPhone（固件 1.2.2 起逐台上报）
+    @Published var iphones: [PairedIphone] = []
     /// 固件最近报告的问题（iPhone 连上后清除）
     @Published var iphoneProblem = ""
 
@@ -257,12 +259,18 @@ final class Esp32Manager: ObservableObject {
         linkLock.unlock()
         linkThread = nil
         link = nil
+        iphones = []
     }
 
     /// 打开配对窗口（3 分钟），让新的 iPhone 配对
     func pairNewIphone() { send("PAIR") }
     /// 删除 ESP32 上保存的所有 iPhone 配对
     func forgetIphones() { send("UNPAIR") }
+    /// 删除一台 iPhone 的配对（id 是 PairedIphone.id）
+    func forgetIphone(_ id: String) {
+        guard id.range(of: "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$", options: .regularExpression) != nil else { return }
+        send("UNPAIR \(id)")
+    }
     /// 在 iPhone 上执行通知的操作（0 = 正向，例如接听；1 = 负向，例如清除/拒接）
     func perform(uid: UInt32, positive: Bool) { send("ACT \(uid) \(positive ? 0 : 1)") }
 
@@ -288,7 +296,7 @@ final class Esp32Manager: ObservableObject {
                 linkPort = port
                 linkLock.unlock()
                 usleep(300_000)
-                try port.write(Array("HB?\nSTATE?\n".utf8))
+                try port.write(Array("HB?\nSTATE?\nBONDS?\n".utf8))
                 announcedError = ""
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.linkError = "" } }
                 var splitter = LineSplitter()
@@ -330,6 +338,8 @@ final class Esp32Manager: ObservableObject {
         switch e {
         case let .hello(version, _, _):
             firmware = .found(version: version)
+        case let .bonds(list):
+            iphones = list
         case let .state(s):
             link = s
             if s.ble == "ready" { iphoneProblem = "" }

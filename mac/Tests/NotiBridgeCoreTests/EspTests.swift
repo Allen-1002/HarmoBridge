@@ -290,6 +290,15 @@ final class EspTests: XCTestCase {
         XCTAssertEqual(withSub.mirrored().appName, "com.tencent.xin")
     }
 
+    func testParseBonds() {
+        let line = #"@{"t":"bonds","list":[{"addr":"51:a8:27:cd:73:e0","name":"Allen 的 iPhone","connected":true,"ready":true},{"addr":"11:22:33:44:55:66","name":"","connected":false,"ready":false},{"name":"x"}]}"#
+        XCTAssertEqual(Esp32LinkParser.parse(line: line), .bonds([
+            PairedIphone(id: "51:a8:27:cd:73:e0", name: "Allen 的 iPhone", connected: true, ancsReady: true),
+            PairedIphone(id: "11:22:33:44:55:66", name: "", connected: false, ancsReady: false),
+        ]))
+        XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"bonds","list":[]}"#), .bonds([]))
+    }
+
     func testParseOtherEventsAndLines() {
         XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"removed","uid":9}"#), .removed(uid: 9))
         XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"acted","uid":9,"action":1}"#), .acted(uid: 9, action: 1))

@@ -220,6 +220,16 @@ public class EspTests
     }
 
     [Fact]
+    public void ParseBonds()
+    {
+        var e = Esp32LinkParser.Parse("""@{"t":"bonds","list":[{"addr":"51:a8:27:cd:73:e0","name":"Allen 的 iPhone","connected":true,"ready":true},{"addr":"11:22:33:44:55:66","name":"","connected":false,"ready":false},{"name":"x"}]}""");
+        var list = Assert.IsType<Esp32Event.Bonds>(e).List;
+        Assert.Equal(2, list.Count);
+        Assert.Equal(new PairedIphone("51:a8:27:cd:73:e0", "Allen 的 iPhone", true, true), list[0]);
+        Assert.Equal("iPhone", list[1].DisplayName);
+    }
+
+    [Fact]
     public void Lines()
     {
         var s = new LineSplitter();

@@ -9,6 +9,11 @@ public abstract record Esp32Event
 {
     public sealed record Hello(string Version, string BleAddress, int Proto) : Esp32Event;
     public sealed record State(Esp32LinkState Link) : Esp32Event;
+    public sealed record Bonds(IReadOnlyList<PairedIphone> List) : Esp32Event
+    {
+        public bool Equals(Bonds? other) => other is not null && List.SequenceEqual(other.List);
+        public override int GetHashCode() => List.Count;
+    }
     public sealed record Notification(IphoneNotification Item) : Esp32Event;
     public sealed record Removed(uint Uid) : Esp32Event;
     public sealed record Acted(uint Uid, int Action) : Esp32Event;
@@ -26,6 +31,12 @@ public sealed record Esp32LinkState(string Ble, string Peer, int Bonds, bool Pai
         "advertising" => Bonds > 0 ? "等待 iPhone 连接" : "等待 iPhone 配对",
         _ => "蓝牙未就绪",
     };
+}
+
+/// <summary>ESP32 上配对过的一台 iPhone。Id 是蓝牙地址（固定不变），Name 是 iPhone 自己的设备名（第一次连上之前可能为空）。</summary>
+public sealed record PairedIphone(string Id, string Name, bool Connected, bool AncsReady)
+{
+    public string DisplayName => Name.Length == 0 ? "iPhone" : Name;
 }
 
 public sealed record IphoneNotification(uint Uid, bool Modified, int Flags, int Category, string AppId, string AppName,
@@ -50,6 +61,9 @@ public sealed record IphoneNotification(uint Uid, bool Modified, int Flags, int 
 
 public static class Esp32LinkParser
 {
+    private static string Str(JsonElement o, string k) => o.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
+    private static bool Bool(JsonElement o, string k) => o.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.True;
+
     public static Esp32Event? Parse(string raw)
     {
         var line = raw.Trim();
@@ -76,6 +90,11 @@ public static class Esp32LinkParser
                     ? new Esp32Event.Notification(new IphoneNotification(uid, S("ev") == "mod", I("flags"), I("cat"), S("app"),
                         S("appName"), S("title"), S("sub"), S("msg"), S("date"), S("pos"), S("neg")))
                     : null,
+                "bonds" => new Esp32Event.Bonds(o.TryGetProperty("list", out var l) && l.ValueKind == JsonValueKind.Array
+                    ? l.EnumerateArray().Where(b => b.ValueKind == JsonValueKind.Object)
+                        .Select(b => new PairedIphone(Str(b, "addr"), Str(b, "name"), Bool(b, "connected"), Bool(b, "ready")))
+                        .Where(b => b.Id.Length > 0).ToList()
+                    : []),
                 "removed" => U("uid") is uint r ? new Esp32Event.Removed(r) : null,
                 "acted" => U("uid") is uint a ? new Esp32Event.Acted(a, I("action")) : null,
                 "err" => new Esp32Event.Error(S("code"), S("msg")),

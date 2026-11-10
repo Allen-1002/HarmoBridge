@@ -22,6 +22,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 #include "serial_link.h"
 
@@ -152,6 +153,12 @@ static void schedule_retry(const char *code, const char *msg) {
     }
 }
 
+static void emit_bonds(void);
+static void read_peer_name(void);
+static void name_get(const uint8_t *bda, char *out, size_t cap);
+static void name_set(const uint8_t *bda, const char *name);
+static bool g_reading_name;
+
 // ---- 广播 ----
 static esp_ble_adv_params_t adv_params = {
     .adv_int_min = 0xA0, // 100 ms
@@ -189,6 +196,7 @@ static void reset_link(void) {
     g_q_len = g_q_head = 0;
     g_in_flight = false;
     g_waiting_app_name = false;
+    g_reading_name = false;
     g_search_retries = 0;
     g_search_retry_at = 0;
     ancs_ds_reset(&g_ds, 0xFF);
@@ -438,6 +446,7 @@ static void gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) 
         break;
     case ESP_GAP_BLE_REMOVE_BOND_DEV_COMPLETE_EVT:
         emit_state();
+        emit_bonds();
         break;
     default:
         break;
@@ -497,6 +506,7 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
     case ESP_GATTC_DISCONNECT_EVT:
         reset_link();
         emit_state();
+        emit_bonds();
         start_advertising();
         break;
     case ESP_GATTC_CFG_MTU_EVT:
@@ -544,7 +554,26 @@ static void gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble
             g_ancs_ready = true;
             g_search_retries = 0;
             emit_state();
+            emit_bonds();
+            read_peer_name();
             pump();
+        }
+        break;
+    case ESP_GATTC_READ_CHAR_EVT:
+        if (g_reading_name) {
+            g_reading_name = false;
+            if (param->read.status == ESP_GATT_OK && param->read.value_len > 0) {
+                char name[64];
+                size_t n = param->read.value_len < sizeof name - 1 ? param->read.value_len : sizeof name - 1;
+                memcpy(name, param->read.value, n);
+                name[n] = 0;
+                char old[64];
+                name_get(g_peer, old, sizeof old);
+                if (strcmp(old, name) != 0) {
+                    name_set(g_peer, name);
+                    emit_bonds();
+                }
+            }
         }
         break;
     case ESP_GATTC_NOTIFY_EVT:
@@ -611,14 +640,83 @@ static void tick(void *arg) {
     UNLOCK();
 }
 
+// ---- 已配对的 iPhone（名字存在 NVS 的 nb_names 里，键是去掉冒号的地址）----
+static void name_key(const uint8_t *bda, char *key) {
+    sprintf(key, "%02x%02x%02x%02x%02x%02x", bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
+}
+
+static void name_get(const uint8_t *bda, char *out, size_t cap) {
+    out[0] = 0;
+    nvs_handle_t h;
+    if (nvs_open("nb_names", NVS_READONLY, &h) != ESP_OK) return;
+    char key[13];
+    name_key(bda, key);
+    size_t len = cap;
+    if (nvs_get_str(h, key, out, &len) != ESP_OK) out[0] = 0;
+    nvs_close(h);
+}
+
+static void name_set(const uint8_t *bda, const char *name) {
+    nvs_handle_t h;
+    if (nvs_open("nb_names", NVS_READWRITE, &h) != ESP_OK) return;
+    char key[13];
+    name_key(bda, key);
+    if (name) nvs_set_str(h, key, name);
+    else nvs_erase_key(h, key);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void emit_bonds(void) {
+    int n = esp_ble_get_bond_device_num();
+    if (n < 0) n = 0;
+    esp_ble_bond_dev_t *list = n ? calloc(n, sizeof(*list)) : NULL;
+    if (n && !list) return;
+    if (n) esp_ble_get_bond_device_list(&n, list);
+    static char buf[2048];
+    size_t o = snprintf(buf, sizeof buf, "{\"t\":\"bonds\",\"list\":[");
+    for (int i = 0; i < n && o < sizeof buf - 200; i++) {
+        char addr[18], name[64], esc[140];
+        fmt_bda(list[i].bd_addr, addr);
+        name_get(list[i].bd_addr, name, sizeof name);
+        json_escape(name, esc, sizeof esc);
+        bool conn = g_connected && memcmp(list[i].bd_addr, g_peer, 6) == 0;
+        o += snprintf(buf + o, sizeof buf - o,
+                      "%s{\"addr\":\"%s\",\"name\":\"%s\",\"connected\":%s,\"ready\":%s}", i ? "," : "",
+                      addr, esc, conn ? "true" : "false", conn && g_ancs_ready ? "true" : "false");
+    }
+    snprintf(buf + o, sizeof buf - o, "]}");
+    free(list);
+    serial_eventf("%s", buf);
+}
+
+static bool parse_bda(const char *s, esp_bd_addr_t out) {
+    unsigned v[6];
+    if (sscanf(s, "%2x:%2x:%2x:%2x:%2x:%2x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) return false;
+    for (int i = 0; i < 6; i++) out[i] = (uint8_t)v[i];
+    return true;
+}
+
+// 读 iPhone 的设备名（GAP Device Name 0x2A00），例如 “Allen 的 iPhone”
+static void read_peer_name(void) {
+    esp_bt_uuid_t u = {.len = ESP_UUID_LEN_16, .uuid.uuid16 = ESP_GATT_UUID_GAP_DEVICE_NAME};
+    g_reading_name = esp_ble_gattc_read_by_type(g_gattc_if, g_conn_id, 1, 0xFFFF, &u, ESP_GATT_AUTH_REQ_NONE) == ESP_OK;
+}
+
 // ---- 电脑发来的命令 ----
+static void remove_bond(const uint8_t *bda) {
+    if (g_connected && memcmp(bda, g_peer, 6) == 0) esp_ble_gap_disconnect(g_peer);
+    name_set(bda, NULL);
+    esp_ble_remove_bond_device((uint8_t *)bda);
+}
+
 static void remove_all_bonds(void) {
     int n = esp_ble_get_bond_device_num();
     if (n <= 0) return;
     esp_ble_bond_dev_t *list = calloc(n, sizeof(*list));
     if (!list) return;
     esp_ble_get_bond_device_list(&n, list);
-    for (int i = 0; i < n; i++) esp_ble_remove_bond_device(list[i].bd_addr);
+    for (int i = 0; i < n; i++) remove_bond(list[i].bd_addr);
     free(list);
 }
 
@@ -641,6 +739,12 @@ static void handle_command(char *line) {
         if (g_connected) esp_ble_gap_disconnect(g_peer);
         remove_all_bonds();
         emit_state();
+    } else if (strncmp(line, "UNPAIR ", 7) == 0) {
+        esp_bd_addr_t bda;
+        if (parse_bda(line + 7, bda)) remove_bond(bda);
+        else emit_error("bad_addr", "地址格式不对");
+    } else if (strcmp(line, "BONDS?") == 0) {
+        emit_bonds();
     } else if (strncmp(line, "ACT ", 4) == 0) {
         char *end;
         unsigned long uid = strtoul(line + 4, &end, 10);

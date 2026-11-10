@@ -5,6 +5,7 @@ import Foundation
 public enum Esp32Event: Equatable {
     case hello(version: String, bleAddress: String, proto: Int)
     case state(Esp32LinkState)
+    case bonds([PairedIphone])
     case notification(IphoneNotification)
     case removed(uid: UInt32)
     case acted(uid: UInt32, action: Int)
@@ -33,6 +34,26 @@ public struct Esp32LinkState: Equatable {
         default: return "蓝牙未就绪"
         }
     }
+}
+
+/// ESP32 上配对过的一台 iPhone
+public struct PairedIphone: Identifiable, Equatable {
+    /// 蓝牙地址（aa:bb:cc:dd:ee:ff），固定不变
+    public var id: String
+    /// iPhone 自己的设备名，例如“Allen 的 iPhone”；第一次连上之前可能为空
+    public var name: String
+    public var connected: Bool
+    /// 已订阅通知，可以收通知
+    public var ancsReady: Bool
+
+    public init(id: String, name: String, connected: Bool, ancsReady: Bool) {
+        self.id = id
+        self.name = name
+        self.connected = connected
+        self.ancsReady = ancsReady
+    }
+
+    public var displayName: String { name.isEmpty ? "iPhone" : name }
 }
 
 public struct IphoneNotification: Equatable {
@@ -110,6 +131,13 @@ public enum Esp32LinkParser {
                 uid: uid, modified: s("ev") == "mod", flags: i("flags"), category: i("cat"), appId: s("app"),
                 appName: s("appName"), title: s("title"), subtitle: s("sub"), message: s("msg"), date: s("date"),
                 positiveLabel: s("pos"), negativeLabel: s("neg")))
+        case "bonds":
+            let list = obj["list"] as? [[String: Any]] ?? []
+            return .bonds(list.compactMap { b in
+                guard let addr = b["addr"] as? String, !addr.isEmpty else { return nil }
+                return PairedIphone(id: addr, name: b["name"] as? String ?? "", connected: b["connected"] as? Bool ?? false,
+                                    ancsReady: b["ready"] as? Bool ?? false)
+            })
         case "removed":
             guard let uid = u("uid") else { return nil }
             return .removed(uid: uid)
