@@ -147,6 +147,9 @@ void serial_link_start(serial_cmd_handler_t handler) {
     // 控制台日志也在 UART0；电脑只解析以 HB- 或 @ 开头的行
     ESP_ERROR_CHECK(uart_driver_install(LINK_UART, 8192, 8192, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(LINK_UART, &cfg));
+    // 高波特率下蓝牙中断会推迟串口中断：FIFO 只有 128 字节，提前到 32 字节就取走，避免溢出丢字节
+    uart_set_rx_full_threshold(LINK_UART, 32);
+    uart_set_rx_timeout(LINK_UART, 4);
     esp_log_set_vprintf(log_vprintf);
     last_rx_us = esp_timer_get_time();
     xTaskCreate(rx_task, "serial_rx", 4096, NULL, 5, NULL);

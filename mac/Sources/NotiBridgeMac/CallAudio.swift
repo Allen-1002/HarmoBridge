@@ -86,6 +86,7 @@ final class CallAudio {
         }
         engine.prepare()
         try engine.start()
+        if sender == nil { startSender() }
         onLog?("通话声音已切到 Mac（\(sampleRate / 1000) kHz，\(voiceProcessing ? "系统回声消除已开启" : "未使用回声消除")，输入 \(Int(inFormat.sampleRate)) Hz × \(inFormat.channelCount)）")
     }
 
@@ -110,15 +111,49 @@ final class CallAudio {
             let v = max(-1, min(1, ch[i]))
             pendingUp.append(Int16(v * 32767))
         }
+        // 系统一次给的麦克风数据可能有 100 ms，一口气发出去会让 ESP32 的串口接收溢出：
+        // 先放进队列，由发送线程每 7.5 ms 发一帧
+        sendLock.lock()
         while pendingUp.count >= frameSamples {
-            let frame = Array(pendingUp.prefix(frameSamples))
+            upQueue.append(PCM16.bytes(Array(pendingUp.prefix(frameSamples))))
             pendingUp.removeFirst(frameSamples)
-            sendUp(PCM16.bytes(frame))
-            sent += 1
         }
+        // 积压超过 200 ms（时钟漂移）就丢掉最旧的
+        if upQueue.count > 27 { upQueue.removeFirst(upQueue.count - 27) }
+        sendLock.unlock()
+    }
+
+    private var upQueue: [[UInt8]] = []
+    private let sendLock = NSLock()
+    private var sender: Thread?
+    private var sending = false
+
+    private func startSender() {
+        sending = true
+        let t = Thread { [weak self] in
+            var next = Date()
+            while let self, self.sending {
+                self.sendLock.lock()
+                let f = self.upQueue.isEmpty ? nil : self.upQueue.removeFirst()
+                self.sendLock.unlock()
+                if let f {
+                    self.sendUp(f)
+                    self.sent += 1
+                }
+                next = next.addingTimeInterval(0.0075)
+                let d = next.timeIntervalSinceNow
+                if d > 0 { Thread.sleep(forTimeInterval: d) } else if d < -0.1 { next = Date() }
+            }
+        }
+        t.name = "call-audio-up"
+        t.qualityOfService = .userInteractive
+        sender = t
+        t.start()
     }
 
     func stop() {
+        sending = false
+        sender = nil
         stopEngine()
         jitter.reset()
         if jitter.underruns > 0 || jitter.dropped > 0 {
