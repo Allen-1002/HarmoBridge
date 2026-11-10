@@ -11,6 +11,87 @@ public enum Esp32Event: Equatable {
     case removed(uid: UInt32, peer: String)
     case acted(uid: UInt32, action: Int)
     case error(code: String, message: String)
+    /// 免提（HFP）连接状态
+    case hfp(HfpLink)
+    /// 通话状态
+    case call(PhoneCall)
+    /// ESP32 上配对过的手机（经典蓝牙，用于通话）
+    case phones([PairedPhone])
+    /// 手机蓝牙配对时显示的 6 位数字（与手机上显示的应一致）
+    case pairCode(String)
+    case callWaiting(number: String)
+}
+
+/// 免提连接（ESP32 ↔ 手机的经典蓝牙 HFP）
+public struct HfpLink: Equatable {
+    /// disconnected / connecting / connected / disconnecting
+    public var state: String
+    public var peer: String
+    public var name: String
+    /// off / connecting / cvsd（8 kHz）/ msbc（16 kHz）
+    public var audio: String
+    /// 通话声音走电脑（pc）还是留在手机上（phone）
+    public var audioToPC: Bool
+    public var battery: Int
+    public var signal: Int
+    public var networkOperator: String
+    public var discoverable: Bool
+
+    public init(state: String, peer: String, name: String, audio: String, audioToPC: Bool, battery: Int, signal: Int,
+                networkOperator: String, discoverable: Bool) {
+        self.state = state
+        self.peer = peer
+        self.name = name
+        self.audio = audio
+        self.audioToPC = audioToPC
+        self.battery = battery
+        self.signal = signal
+        self.networkOperator = networkOperator
+        self.discoverable = discoverable
+    }
+
+    public var connected: Bool { state == "connected" }
+}
+
+/// 通话状态
+public struct PhoneCall: Equatable {
+    /// idle / incoming（来电）/ dialing（呼出）/ alerting（对方振铃）/ active（通话中）
+    public var state: String
+    public var number: String
+    public var held: Int
+
+    public init(state: String, number: String, held: Int) {
+        self.state = state
+        self.number = number
+        self.held = held
+    }
+
+    public static let idle = PhoneCall(state: "idle", number: "", held: 0)
+    public var isIdle: Bool { state == "idle" }
+    public var label: String {
+        switch state {
+        case "incoming": return "来电"
+        case "dialing": return "正在呼叫"
+        case "alerting": return "对方振铃中"
+        case "active": return held > 0 ? "通话保持中" : "通话中"
+        default: return "空闲"
+        }
+    }
+}
+
+/// 配对过的手机（经典蓝牙）
+public struct PairedPhone: Identifiable, Equatable {
+    public var id: String
+    public var name: String
+    public var connected: Bool
+
+    public init(id: String, name: String, connected: Bool) {
+        self.id = id
+        self.name = name
+        self.connected = connected
+    }
+
+    public var displayName: String { name.isEmpty ? "手机" : name }
 }
 
 public struct Esp32LinkState: Equatable {
@@ -141,6 +222,23 @@ public enum Esp32LinkParser {
                 return PairedIphone(id: addr, name: b["name"] as? String ?? "", connected: b["connected"] as? Bool ?? false,
                                     ancsReady: b["ready"] as? Bool ?? false)
             })
+        case "hfp":
+            return .hfp(HfpLink(state: s("state"), peer: s("peer"), name: s("name"), audio: s("audio"),
+                                audioToPC: s("audioTo") == "pc", battery: (obj["battery"] as? NSNumber)?.intValue ?? -1,
+                                signal: (obj["signal"] as? NSNumber)?.intValue ?? -1, networkOperator: s("operator"),
+                                discoverable: obj["discoverable"] as? Bool ?? false))
+        case "call":
+            return .call(PhoneCall(state: s("state").isEmpty ? "idle" : s("state"), number: s("number"), held: i("held")))
+        case "phones":
+            let list = obj["list"] as? [[String: Any]] ?? []
+            return .phones(list.compactMap { b in
+                guard let addr = b["addr"] as? String, !addr.isEmpty else { return nil }
+                return PairedPhone(id: addr, name: b["name"] as? String ?? "", connected: b["connected"] as? Bool ?? false)
+            })
+        case "pair_code":
+            return .pairCode(s("code"))
+        case "call_waiting":
+            return .callWaiting(number: s("number"))
         case "removed":
             guard let uid = u("uid") else { return nil }
             return .removed(uid: uid, peer: s("peer"))

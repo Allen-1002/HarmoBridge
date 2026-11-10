@@ -17,7 +17,9 @@
 #include "esp_gattc_api.h"
 #include "esp_gatt_common_api.h"
 #include "esp_log.h"
+#include "esp_gap_bt_api.h"
 #include "esp_mac.h"
+#include "hfp.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -122,9 +124,9 @@ static int bond_count(void) {
     return n < 0 ? 0 : n;
 }
 
-static bool pairing_allowed(void) {
-    return bond_count() == 0 || (g_pairing_until > 0 && esp_timer_get_time() < g_pairing_until);
-}
+static bool pairing_window_open(void) { return g_pairing_until > 0 && esp_timer_get_time() < g_pairing_until; }
+
+static bool pairing_allowed(void) { return bond_count() == 0 || pairing_window_open(); }
 
 static void emit_state(void) {
     const char *ble = g_ancs_ready ? "ready" : g_encrypted ? "encrypted" : g_connected ? "connected"
@@ -433,7 +435,7 @@ static void gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) 
     }
     case ESP_GAP_BLE_AUTH_CMPL_EVT:
         if (param->ble_security.auth_cmpl.success) {
-            g_pairing_until = 0; // 配对成功后关闭窗口
+            // 配对窗口不在这里关闭：同一台 iPhone 接着还要做经典蓝牙（通话）配对
             if (!g_connected) {
                 // 加密完成事件有时比 GATT 的连接事件先到（iPhone 重连时自己发起加密）：记下来，连接事件里接上
                 g_auth_early_at = esp_timer_get_time();
@@ -643,6 +645,7 @@ static void tick(void *arg) {
         if (g_encrypted) search_ancs();
     }
     UNLOCK();
+    hfp_tick();
 }
 
 // ---- 已配对的 iPhone（名字存在 NVS 的 nb_names 里，键是去掉冒号的地址）----
@@ -737,9 +740,11 @@ static void handle_command(char *line) {
     LOCK();
     if (strcmp(line, "STATE?") == 0) {
         emit_state();
+        hfp_emit_all();
     } else if (strcmp(line, "PAIR") == 0) {
         g_pairing_until = esp_timer_get_time() + PAIRING_WINDOW_US;
         emit_state();
+        hfp_pairing_changed();
     } else if (strcmp(line, "UNPAIR") == 0) {
         if (g_connected) esp_ble_gap_disconnect(g_peer);
         remove_all_bonds();
@@ -759,7 +764,7 @@ static void handle_command(char *line) {
     } else if (strcmp(line, "REBOOT") == 0) {
         esp_restart();
     } else {
-        emit_error("unknown_cmd", "未知命令");
+        if (!hfp_handle_command(line)) emit_error("unknown_cmd", "未知命令");
     }
     UNLOCK();
 }
@@ -782,10 +787,10 @@ void app_main(void) {
     serial_link_start(handle_command);
 
     // 第一阶段只用 BLE；经典蓝牙（HFP 通话）在第二阶段加入
-    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
+    // 双模：BLE（iPhone 通知）+ 经典蓝牙（HFP 通话）
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_bt_controller_init(&bt_cfg));
-    ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_BLE));
+    ESP_ERROR_CHECK(esp_bt_controller_enable(ESP_BT_MODE_BTDM));
     ESP_ERROR_CHECK(esp_bluedroid_init());
     ESP_ERROR_CHECK(esp_bluedroid_enable());
 
@@ -801,6 +806,8 @@ void app_main(void) {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &init_key, 1);
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, 1);
 
+    esp_bt_gap_set_device_name(DEVICE_NAME);
+    hfp_init(pairing_window_open);
     ESP_ERROR_CHECK(esp_ble_gap_register_callback(gap_cb));
     ESP_ERROR_CHECK(esp_ble_gattc_register_callback(gattc_cb));
     ESP_ERROR_CHECK(esp_ble_gattc_app_register(0));

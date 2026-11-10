@@ -291,6 +291,19 @@ final class EspTests: XCTestCase {
         XCTAssertEqual(withSub.mirrored().appName, "com.tencent.xin")
     }
 
+    func testParseCallEvents() {
+        XCTAssertEqual(
+            Esp32LinkParser.parse(line: #"@{"t":"hfp","state":"connected","peer":"1c:8f:57:16:d3:00","name":"Allen 的 iPhone","audio":"msbc","audioTo":"pc","battery":4,"signal":5,"operator":"中国移动","discoverable":false}"#),
+            .hfp(HfpLink(state: "connected", peer: "1c:8f:57:16:d3:00", name: "Allen 的 iPhone", audio: "msbc", audioToPC: true,
+                         battery: 4, signal: 5, networkOperator: "中国移动", discoverable: false)))
+        XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"call","state":"incoming","number":"+8613800000000","call":0,"setup":1,"held":0}"#),
+                       .call(PhoneCall(state: "incoming", number: "+8613800000000", held: 0)))
+        XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"phones","list":[{"addr":"aa:bb:cc:dd:ee:ff","name":"","connected":false}]}"#),
+                       .phones([PairedPhone(id: "aa:bb:cc:dd:ee:ff", name: "", connected: false)]))
+        XCTAssertEqual(Esp32LinkParser.parse(line: #"@{"t":"pair_code","code":"012345"}"#), .pairCode("012345"))
+        XCTAssertEqual(PhoneCall.idle.label, "空闲")
+    }
+
     func testParseBonds() {
         let line = #"@{"t":"bonds","list":[{"addr":"51:a8:27:cd:73:e0","name":"Allen 的 iPhone","connected":true,"ready":true},{"addr":"11:22:33:44:55:66","name":"","connected":false,"ready":false},{"name":"x"}]}"#
         XCTAssertEqual(Esp32LinkParser.parse(line: line), .bonds([

@@ -32,9 +32,7 @@ struct Esp32Panel: View {
                 Divider().opacity(0.5)
                 StatusLine(title: "iPhone", ok: esp.iphones.contains(where: \.ancsReady)) { iphoneRow }
                 Divider().opacity(0.5)
-                StatusLine(title: "通话", ok: false) {
-                    Text("即将支持：安卓、鸿蒙和 iPhone 都能在电脑上接打电话").foregroundStyle(.secondary)
-                }
+                StatusLine(title: "通话", ok: esp.hfp?.connected == true) { CallRow(esp: esp) }
             }
             DisclosureGroup("高级", isExpanded: $showAdvanced) { advanced.padding(.top, 8) }
         }

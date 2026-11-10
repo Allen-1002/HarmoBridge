@@ -65,6 +65,11 @@ final class Esp32Manager: ObservableObject {
     @Published var linkError = ""
     /// ESP32 上配对过的 iPhone（固件 1.2.2 起逐台上报）
     @Published var iphones: [PairedIphone] = []
+    /// 通话（固件 1.3.0 起）：免提连接、当前通话、配对过的手机、蓝牙配对码
+    @Published var hfp: HfpLink?
+    @Published var call: PhoneCall = .idle
+    @Published var phones: [PairedPhone] = []
+    @Published var pairCode: String?
     /// 固件最近报告的问题（iPhone 连上后清除）
     @Published var iphoneProblem = ""
 
@@ -385,12 +390,36 @@ final class Esp32Manager: ObservableObject {
         linkThread = nil
         link = nil
         iphones = []
+        hfp = nil
+        call = .idle
+        phones = []
     }
 
     /// 打开配对窗口（3 分钟），让新的 iPhone 配对
     func pairNewIphone() { send("PAIR") }
     /// 删除 ESP32 上保存的所有 iPhone 配对
     func forgetIphones() { send("UNPAIR") }
+    // MARK: 通话控制
+    func answer() { send("ANSWER") }
+    /// 来电时拒接，通话中/呼出时挂断
+    func hangUp() { send("HANGUP") }
+    func dial(_ number: String) {
+        let n = number.filter { "0123456789+*#".contains($0) }
+        guard !n.isEmpty, n.count < 32 else { return }
+        send("DIAL \(n)")
+    }
+    func redial() { send("REDIAL") }
+    func sendDtmf(_ c: Character) { if "0123456789*#".contains(c) { send("DTMF \(c)") } }
+    /// 通话声音走电脑还是留在手机上
+    func setAudioToPC(_ on: Bool) { send(on ? "AUDIO PC" : "AUDIO PHONE") }
+    func connectPhone(_ id: String? = nil) { send(id.map { "HFP CONNECT \($0)" } ?? "HFP CONNECT") }
+    func disconnectPhone() { send("HFP DISCONNECT") }
+    /// 删除一台手机的通话配对（id 是 PairedPhone.id）
+    func forgetPhone(_ id: String) {
+        guard id.range(of: "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$", options: .regularExpression) != nil else { return }
+        send("UNPAIR_BT \(id)")
+    }
+
     /// 删除一台 iPhone 的配对（id 是 PairedIphone.id）
     func forgetIphone(_ id: String) {
         guard id.range(of: "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$", options: .regularExpression) != nil else { return }
@@ -421,7 +450,7 @@ final class Esp32Manager: ObservableObject {
                 linkPort = port
                 linkLock.unlock()
                 usleep(300_000)
-                try port.write(Array("HB?\nSTATE?\nBONDS?\n".utf8))
+                try port.write(Array("HB?\nSTATE?\nBONDS?\nPHONES?\n".utf8))
                 announcedError = ""
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.linkError = "" } }
                 var splitter = LineSplitter()
@@ -466,6 +495,15 @@ final class Esp32Manager: ObservableObject {
             Task { await refreshFirmwareFeed() }
         case let .bonds(list):
             iphones = list
+        case let .hfp(h):
+            hfp = h
+        case let .call(c):
+            call = c
+            if !c.isIdle { pairCode = nil }
+        case let .phones(list):
+            phones = list
+        case let .pairCode(code):
+            pairCode = code
         case let .state(s):
             link = s
             if s.ble == "ready" { iphoneProblem = "" }

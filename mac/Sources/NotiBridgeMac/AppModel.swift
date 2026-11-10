@@ -610,12 +610,34 @@ final class AppModel: ObservableObject {
             let key = scopedId(Self.iphoneSource(peer), "ios-\(uid)")
             notifier.remove([key])
             deduper.remove(key)
+        case let .call(c):
+            handleCall(c)
         case let .state(s):
             if s.ble != lastIphoneBle {
                 if s.ble == "ready" { log("iPhone 已通过 ESP32 连接") }
                 else if lastIphoneBle == "ready" { log("iPhone 已断开，ESP32 等待重新连接") }
                 lastIphoneBle = s.ble
             }
+        default:
+            break
+        }
+    }
+
+    /// 来电时弹系统通知，接通或结束后收起
+    private var lastCallState = "idle"
+    private func handleCall(_ c: PhoneCall) {
+        defer { lastCallState = c.state }
+        guard c.state != lastCallState else { return }
+        switch c.state {
+        case "incoming":
+            notifier.showCall(number: c.number.isEmpty ? "未知号码" : c.number)
+            log("来电 \(c.number.isEmpty ? "未知号码" : c.number)（经 ESP32）")
+        case "active":
+            notifier.clearCall()
+            log("通话已接通")
+        case "idle":
+            notifier.clearCall()
+            if lastCallState != "idle" { log("通话结束") }
         default:
             break
         }
