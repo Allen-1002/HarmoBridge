@@ -29,6 +29,18 @@ public partial class MainWindow : Window
         _iphoneTimer.Tick += (_, _) => RefreshIphoneFlow();
         VersionText.Text = $"NotiBridge for Windows {Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)} · 与 Mac 版、手机端使用同一套加密协议";
 
+        // 通话横条：浮在页面顶部，来电/通话时显示
+        var callBar = new CallBar(model.CallSession)
+        {
+            Margin = new Thickness(24, 12, 28, 0), VerticalAlignment = VerticalAlignment.Top,
+            Background = TryFindResource("ApplicationBackgroundBrush") as System.Windows.Media.Brush ?? SystemColors.WindowBrush,
+            Visibility = Visibility.Collapsed,
+        };
+        Panel.SetZIndex(callBar, 100);
+        PageHost.Children.Add(callBar);
+        model.CallSession.PropertyChanged += (_, _) => Dispatcher.BeginInvoke(() =>
+            callBar.Visibility = model.CallSession.IsIdle ? Visibility.Collapsed : Visibility.Visible);
+
         model.Records.CollectionChanged += OnRecordsChanged;
         model.Devices.CollectionChanged += OnDevicesChanged;
         model.PropertyChanged += OnModelChanged;

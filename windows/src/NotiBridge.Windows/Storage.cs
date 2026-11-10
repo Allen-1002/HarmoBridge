@@ -40,6 +40,10 @@ public sealed class AppSettings
     public bool RepairNoticePending { get; set; }
     public bool Paused { get; set; }
     public bool CopyOtp { get; set; } = true;
+    /// <summary>通话期间不弹通知（挂断后汇总）</summary>
+    public bool QuietDuringCalls { get; set; } = true;
+    /// <summary>最近通话的号码（新的在前）</summary>
+    public List<string> RecentCalls { get; set; } = [];
     public bool ShowContentInList { get; set; }
     /// <summary>首次运行时选择了“不安装”（以免安装方式运行）</summary>
     public bool InstallDeclined { get; set; }

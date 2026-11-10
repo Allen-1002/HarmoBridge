@@ -85,6 +85,7 @@ public partial class App : Application
         Model.ShowWindowRequested += ShowMain;
         _tray = new TrayIcon(Model, ShowMain, Quit);
         Model.Start(Updater.UpdatedVersionArg(e.Args));
+        Model.AttachCallWindow();
 
         var background = e.Args.Contains("--background");
         if (!Model.Onboarded || !background) ShowMain();

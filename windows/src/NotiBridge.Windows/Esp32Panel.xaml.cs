@@ -135,15 +135,63 @@ public partial class Esp32Panel : UserControl
             : null;
         PairPhoneRow.Visibility = supported ? Visibility.Visible : Visibility.Collapsed;
         PairPhoneButton.Content = esp.Phones.Count == 0 ? "配对手机" : "配对新手机";
+        RefreshSuggestions();
     }
 
     private void OnAnswer(object sender, RoutedEventArgs e) => Esp?.Answer();
     private void OnHangUp(object sender, RoutedEventArgs e) => Esp?.HangUp();
-    private void OnDial(object sender, RoutedEventArgs e) => Esp?.Dial(DialBox.Text);
+    private static AppModel? App => (System.Windows.Application.Current as App)?.Model;
+
+    private void OnDial(object sender, RoutedEventArgs e) => DialTarget();
+
+    /// <summary>输入的是号码就拨号码；是名字且只匹配一个联系人就拨他</summary>
+    private void DialTarget()
+    {
+        var t = DialBox.Text.Trim();
+        var digits = new string(t.Where(c => "0123456789+*#".Contains(c)).ToArray());
+        if (digits.Length > 0 && digits.Length == t.Count(c => !char.IsWhiteSpace(c) && c != '-')) { Esp?.Dial(digits); return; }
+        var m = App?.Contacts.Index.Search(t) ?? [];
+        if (m.Count == 1) Esp?.Dial(m[0].Number);
+    }
+
+    private void OnDialChanged(object sender, TextChangedEventArgs e) => RefreshSuggestions();
+
+    private void RefreshSuggestions()
+    {
+        if (App is not { } app) return;
+        var q = DialBox.Text.Trim();
+        var items = q.Length == 0
+            ? app.RecentCalls.Take(5).Select(n => new { Label = app.Contacts.NameFor(n) ?? "", Number = n })
+            : app.Contacts.Index.Search(q).Select(c => new { Label = c.Name, Number = c.Number });
+        DialSuggestions.ItemsSource = items.ToList();
+        ContactsInfo.Text = app.Contacts.Count > 0 ? $"已导入 {app.Contacts.Count} 个号码（保存在这台电脑上）" : "导入手机导出的 .vcf 或 CSV 后，来电和拨号可以显示联系人名字";
+    }
+
+    private void OnDialSuggestion(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string n }) { DialBox.Text = n; Esp?.Dial(n); }
+    }
+
+    private void OnImportContacts(object sender, RoutedEventArgs e)
+    {
+        if (App is not { } app) return;
+        var dlg = new Microsoft.Win32.OpenFileDialog { Filter = "联系人文件 (*.vcf;*.csv)|*.vcf;*.csv", Title = "导入联系人" };
+        if (dlg.ShowDialog() != true) return;
+        try
+        {
+            var n = app.Contacts.Import(dlg.FileName);
+            MessageBox.Show($"已导入 {n} 个号码。之后来电和拨号会显示联系人名字。", "导入联系人");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"导入失败：{ex.Message}", "导入联系人", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        RefreshSuggestions();
+    }
     private void OnRedial(object sender, RoutedEventArgs e) => Esp?.Redial();
     private void OnDialKey(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key == System.Windows.Input.Key.Enter) Esp?.Dial(DialBox.Text);
+        if (e.Key == System.Windows.Input.Key.Enter) DialTarget();
     }
     private void OnPairPhone(object sender, RoutedEventArgs e) => Esp?.PairNewIphone();
     private void OnConnectPhone(object sender, RoutedEventArgs e)

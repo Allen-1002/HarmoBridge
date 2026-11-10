@@ -78,10 +78,31 @@
                     <Button x:Name="HangUpButton" Content="挂断" Click="OnHangUp" />
                 </StackPanel>
                 <!-- 拨号 -->
-                <StackPanel x:Name="DialRow" Orientation="Horizontal" Margin="0,6,0,0">
-                    <TextBox x:Name="DialBox" Width="180" Margin="0,0,8,0" KeyDown="OnDialKey" />
-                    <Button Content="拨打" Click="OnDial" Margin="0,0,8,0" />
-                    <Button Content="重拨" Click="OnRedial" />
+                <StackPanel x:Name="DialRow" Margin="0,6,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBox x:Name="DialBox" Width="180" Margin="0,0,8,0" KeyDown="OnDialKey" TextChanged="OnDialChanged"
+                                 ToolTip="输入名字或号码" />
+                        <Button Content="拨打" Click="OnDial" Margin="0,0,8,0" />
+                        <Button Content="重拨" Click="OnRedial" />
+                    </StackPanel>
+                    <!-- 匹配的联系人；输入框空着时是最近通话 -->
+                    <ItemsControl x:Name="DialSuggestions" Margin="0,4,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Tag="{Binding Number}" Click="OnDialSuggestion" HorizontalAlignment="Left" Padding="6,2" Margin="0,1,0,1">
+                                    <TextBlock>
+                                        <Run Text="{Binding Label, Mode=OneWay}" />
+                                        <Run Text="{Binding Number, Mode=OneWay}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    </TextBlock>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button Content="导入联系人…" Click="OnImportContacts" Margin="0,0,8,0" />
+                        <TextBlock x:Name="ContactsInfo" VerticalAlignment="Center" FontSize="12"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
                 </StackPanel>
                 <ItemsControl x:Name="PhoneList" Margin="0,6,0,0">
                     <ItemsControl.ItemTemplate>

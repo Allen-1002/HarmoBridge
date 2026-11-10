@@ -428,6 +428,7 @@ public sealed partial class Esp32Manager : ObservableObject
         Link = null;
         Iphones = [];
         Hfp = null;
+        UpdateCallAudio();
         Call = PhoneCall.Idle;
         Phones = [];
     }
@@ -453,15 +454,17 @@ public sealed partial class Esp32Manager : ObservableObject
     public string? PairCode { get => _pairCode; private set => Set(ref _pairCode, value); }
     public bool FirmwareSupportsCalls => FirmwareOk && (UpdateCore.CompareVersions(_firmwareVersion, "1.3.0") ?? -1) >= 0;
 
-    public void Answer() => Send("ANSWER");
+    /// <summary>在电脑上接听：声音走电脑</summary>
+    public void Answer() { Send("AUDIO PC"); Send("ANSWER"); }
     /// <summary>来电时拒接，通话中/呼出时挂断</summary>
     public void HangUp() => Send("HANGUP");
     public void Dial(string number)
     {
         var n = new string(number.Where(c => "0123456789+*#".Contains(c)).ToArray());
-        if (n.Length is > 0 and < 32) Send($"DIAL {n}");
+        if (n.Length is > 0 and < 32) { Send("AUDIO PC"); Send($"DIAL {n}"); }
     }
-    public void Redial() => Send("REDIAL");
+    public void Redial() { Send("AUDIO PC"); Send("REDIAL"); }
+    public void SendDtmf(char c) { if ("0123456789*#".Contains(c)) Send($"DTMF {c}"); }
     public void SetAudioToPC(bool on) => Send(on ? "AUDIO PC" : "AUDIO PHONE");
     public void ConnectPhone(string? id = null) => Send(id is null ? "HFP CONNECT" : $"HFP CONNECT {id}");
     private static bool IsAddr(string id) => System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$");
@@ -488,16 +491,37 @@ public sealed partial class Esp32Manager : ObservableObject
     /// <summary>在 iPhone 上执行通知的操作（正向如接听，负向如清除/拒接）</summary>
     public void Perform(uint uid, bool positive) => Send($"ACT {uid} {(positive ? 0 : 1)}");
 
+    private readonly object _writeLock = new();
+    private void Write(SerialPortTransport port, byte[] bytes)
+    {
+        lock (_writeLock) port.Write(bytes);
+    }
+
     private void Send(string line)
     {
         SerialPortTransport? p;
         lock (_linkLock) p = _linkPort;
-        try { p?.Write(Encoding.UTF8.GetBytes(line + "\n")); } catch (Exception) { }
+        try { if (p is not null) Write(p, Encoding.UTF8.GetBytes(line + "\n")); } catch (Exception) { }
+    }
+
+    /// <summary>通话声音（在电脑上播放/采集时不为 null）</summary>
+    private volatile CallAudio? _callAudio;
+    private ushort _upSeq;
+
+    /// <summary>麦克风帧发给 ESP32（发送线程）</summary>
+    private void SendUp(byte[] pcm)
+    {
+        SerialPortTransport? p;
+        lock (_linkLock) p = _linkPort;
+        if (p is null) return;
+        _upSeq++;
+        try { Write(p, SerialDemux.Encode(SerialFrameType.AudioUp, _upSeq, pcm)); } catch (Exception) { }
     }
 
     private void LinkLoop(string portName, Action<Action> ui)
     {
         var announced = "";
+        bool highBaudFailed = false;
         while (true)
         {
             lock (_linkLock) if (_linkStop) return;
@@ -512,22 +536,85 @@ public sealed partial class Esp32Manager : ObservableObject
                     _linkPort = port;
                 }
                 Thread.Sleep(300);
-                port.Write(Encoding.ASCII.GetBytes("HB?\nSTATE?\nBONDS?\nPHONES?\n"));
+                Write(port, Encoding.ASCII.GetBytes("HB?\nSTATE?\nBONDS?\nPHONES?\n"));
                 announced = "";
                 ui(() => { _linkError = ""; Raise(nameof(LinkText)); });
-                var splitter = new LineSplitter();
+                var demux = new SerialDemux();
                 var lastProbe = DateTime.UtcNow;
+                var lastWrite = DateTime.UtcNow;
+                var lastValid = DateTime.UtcNow;
+                int baud = 115200;
+                bool askedHigh = false;
+                DateTime? verifyDeadline = null;
                 while (true)
                 {
-                    var bytes = port.Read(TimeSpan.FromMilliseconds(500));
-                    foreach (var line in splitter.Feed(bytes))
+                    var bytes = port.Read(TimeSpan.FromMilliseconds(200));
+                    var lines = new List<string>();
+                    demux.Feed(bytes, lines.Add, f =>
                     {
+                        if (f.Type == (byte)SerialFrameType.AudioDown) _callAudio?.Receive(f.Data);
+                    });
+                    foreach (var line in lines)
+                    {
+                        if (line.StartsWith("@{", StringComparison.Ordinal) || line.StartsWith("HB-ESP32", StringComparison.Ordinal))
+                            lastValid = DateTime.UtcNow;
+                        if (line.StartsWith("HB-ESP32 ", StringComparison.Ordinal))
+                        {
+                            verifyDeadline = null;
+                            var v = line.Split(' ').Skip(1).FirstOrDefault() ?? "";
+                            // 串口提速：固件 1.3.0 起支持；CH340 在 1M 下最稳（1.5M/2M 持续收发会丢字节）
+                            if (!askedHigh && !highBaudFailed && baud == 115200 && (UpdateCore.CompareVersions(v, "1.3.0") ?? -1) >= 0)
+                            {
+                                askedHigh = true;
+                                Write(port, Encoding.ASCII.GetBytes("BAUD 1000000\n"));
+                            }
+                        }
+                        if (line.StartsWith("@{\"t\":\"baud\"", StringComparison.Ordinal))
+                        {
+                            var i = line.IndexOf("\"value\":", StringComparison.Ordinal);
+                            var num = i < 0 ? "" : new string(line[(i + 8)..].TakeWhile(char.IsAsciiDigit).ToArray());
+                            if (int.TryParse(num, out var nb))
+                            {
+                                Thread.Sleep(20);
+                                port.SetBaud(nb);
+                                baud = nb;
+                                Write(port, Encoding.ASCII.GetBytes("HB?\n"));
+                                lastWrite = DateTime.UtcNow;
+                                verifyDeadline = DateTime.UtcNow.AddSeconds(1.5);
+                                ui(() => LogLine?.Invoke($"ESP32 串口提速到 {nb}"));
+                            }
+                        }
+                        if (line.StartsWith("@{\"t\":\"boot\"", StringComparison.Ordinal))
+                            ui(() => LogLine?.Invoke($"ESP32 重新启动了：{line[1..]}"));
                         if (Esp32LinkParser.Parse(line) is { } e) ui(() => HandleEvent(e));
                     }
-                    if (DateTime.UtcNow - lastProbe > TimeSpan.FromSeconds(30))
+                    var now = DateTime.UtcNow;
+                    // 提速后没有回应：USB 芯片不支持这个波特率，停发 4 秒让固件退回 115200
+                    if (verifyDeadline is { } d && now > d)
                     {
-                        lastProbe = DateTime.UtcNow;
-                        port.Write(Encoding.ASCII.GetBytes("STATE?\n"));
+                        verifyDeadline = null;
+                        highBaudFailed = true;
+                        port.SetBaud(115200);
+                        baud = 115200;
+                        ui(() => LogLine?.Invoke("ESP32 串口提速失败，退回 115200"));
+                        Thread.Sleep(4000);
+                        Write(port, Encoding.ASCII.GetBytes("HB?\nSTATE?\n"));
+                    }
+                    // 高波特率下每秒一次心跳（固件回 pong）；4 秒没有完整消息多半是 ESP32 重启回到了 115200，重连
+                    if (baud != 115200 && now - lastWrite > TimeSpan.FromSeconds(1))
+                    {
+                        Write(port, Encoding.ASCII.GetBytes("PING\n"));
+                        lastWrite = now;
+                    }
+                    if (baud != 115200 && now - lastValid > TimeSpan.FromSeconds(4))
+                    {
+                        ui(() => LogLine?.Invoke("ESP32 串口速度对不上了，重新连接"));
+                        throw new TimeoutException("串口速度不一致");
+                    }
+                    if (now - lastProbe > TimeSpan.FromSeconds(30))
+                    {
+                        lastProbe = now;
+                        Write(port, Encoding.ASCII.GetBytes("STATE?\n"));
                     }
                 }
             }
@@ -557,6 +644,36 @@ public sealed partial class Esp32Manager : ObservableObject
         }
     }
 
+    /// <summary>根据免提状态开关电脑上的通话声音（界面线程）</summary>
+    private void UpdateCallAudio()
+    {
+        int? want = Hfp is { AudioToPC: true } h ? h.Audio switch { "msbc" => 16000, "cvsd" => 8000, _ => null } : null;
+        if (_callAudio is { } cur && cur.SampleRate == want) return;
+        _callAudio?.Dispose();
+        _callAudio = null;
+        if (want is not int sr) return;
+        var a = new CallAudio(sr, SendUp, s => System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => LogLine?.Invoke(s)));
+        try
+        {
+            a.Start();
+            a.Muted = _muted;
+            _callAudio = a;
+        }
+        catch (Exception e)
+        {
+            a.Dispose();
+            LogLine?.Invoke($"无法打开麦克风或扬声器：{e.Message}");
+        }
+    }
+
+    private bool _muted;
+    /// <summary>静音电脑麦克风</summary>
+    public bool Muted
+    {
+        get => _muted;
+        set { Set(ref _muted, value); if (_callAudio is { } a) a.Muted = value; }
+    }
+
     private void HandleEvent(Esp32Event e)
     {
         switch (e)
@@ -569,6 +686,7 @@ public sealed partial class Esp32Manager : ObservableObject
                 break;
             case Esp32Event.Hfp h:
                 Hfp = h.Link;
+                UpdateCallAudio();
                 break;
             case Esp32Event.Call c:
                 Call = c.Info;

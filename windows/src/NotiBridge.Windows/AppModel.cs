@@ -127,6 +127,8 @@ public sealed class AppModel : ObservableObject
     {
         _settings = AppSettings.Load();
         Esp32 = new Esp32Manager(_settings);
+        Contacts = new ContactsStore();
+        CallSession = new CallSession(Esp32, Contacts);
         _notifier = new Notifier(Log);
         Esp32.LogLine += Log;
         Esp32.Event += HandleEsp32;
@@ -367,6 +369,37 @@ public sealed class AppModel : ObservableObject
                 _server.SendSettings(merged, null, other);
         }
         _server.SendSettings(merged, seq, conn);
+    }
+
+    // ---------------- 通话 ----------------
+
+    /// <summary>电脑上的联系人（导入的 vcf/CSV）</summary>
+    public ContactsStore Contacts { get; }
+    /// <summary>当前通话（通话小窗、主窗口横条共用）</summary>
+    public CallSession CallSession { get; }
+    private CallWindow? _callWindow;
+    private int _heldDuringCall;
+    private bool HoldPopups => _settings.QuietDuringCalls && !Esp32.Call.IsIdle;
+
+    /// <summary>通话小窗在 App 启动后创建（需要界面线程）</summary>
+    public void AttachCallWindow() => _callWindow ??= new CallWindow(CallSession);
+
+    public bool QuietDuringCalls
+    {
+        get => _settings.QuietDuringCalls;
+        set { _settings.QuietDuringCalls = value; _settings.Save(); Raise(); }
+    }
+
+    public IReadOnlyList<string> RecentCalls => _settings.RecentCalls;
+
+    private void RememberCall(string number)
+    {
+        if (number.Length == 0) return;
+        _settings.RecentCalls.RemoveAll(n => PhoneNumbers.Key(n) == PhoneNumbers.Key(number));
+        _settings.RecentCalls.Insert(0, number);
+        if (_settings.RecentCalls.Count > 20) _settings.RecentCalls.RemoveRange(20, _settings.RecentCalls.Count - 20);
+        _settings.Save();
+        Raise(nameof(RecentCalls));
     }
 
     // ---------------- 本机设置 ----------------
@@ -611,6 +644,8 @@ public sealed class AppModel : ObservableObject
             case Esp32Event.Notification { Item: var n }:
                 // 连接时 iPhone 会补发通知中心里已有的通知：不弹出
                 if (n.PreExisting) return;
+                // iPhone 自己的“来电”通知：通话小窗已经在提醒了，不再重复弹
+                if (n.Category == 1 && Esp32.Hfp is { Connected: true }) return;
                 var m = n.Mirrored();
                 if (!Paused && !_settings.Filter.Blacklist.Contains(m.BundleName) && CopyOtp)
                 {
@@ -633,14 +668,22 @@ public sealed class AppModel : ObservableObject
                 _deduper.Remove(src + "|" + id);
                 break;
             case Esp32Event.Call { Info: var c } when c.State != _lastCallState:
+                // 来电/通话由通话小窗提醒，不再发系统通知
                 if (c.State == "incoming")
                 {
-                    var who = c.Number.Length == 0 ? "未知号码" : c.Number;
-                    _notifier.ShowLocal("来电", $"{who}（在 NotiBridge 的 ESP32 页接听或拒接）");
-                    Log($"来电 {who}（经 ESP32）");
+                    Log($"来电 {(c.Number.Length == 0 ? "未知号码" : c.Number)}（经 ESP32）");
+                    RememberCall(c.Number);
                 }
-                else if (c.State == "active") Log("通话已接通");
-                else if (c.IsIdle && _lastCallState != "idle") Log("通话结束");
+                else if (c.State == "active") { Log("通话已接通"); RememberCall(c.Number); }
+                else if (c.IsIdle && _lastCallState != "idle")
+                {
+                    Log("通话结束");
+                    if (_heldDuringCall > 0)
+                    {
+                        _notifier.ShowLocal($"通话期间收到 {_heldDuringCall} 条通知", "可以在 NotiBridge 的通知记录里查看。");
+                        _heldDuringCall = 0;
+                    }
+                }
                 _lastCallState = c.State;
                 break;
             case Esp32Event.State s when s.Link.Ble != _lastIphoneBle:
@@ -791,7 +834,8 @@ public sealed class AppModel : ObservableObject
                     result = "duplicate";
                     break;
                 default:
-                    _notifier.Show(n, dev, DeviceName(dev), MultipleSources);
+                    if (HoldPopups) _heldDuringCall++;
+                    else _notifier.Show(n, dev, DeviceName(dev), MultipleSources);
                     result = "shown";
                     break;
             }
@@ -824,7 +868,8 @@ public sealed class AppModel : ObservableObject
         Raise(nameof(LastOtpText));
         Raise(nameof(HasLastOtp));
         RaiseStats();
-        _notifier.ShowOtp(o.Code, o.AppName, MultipleSources && dev.Length > 0 ? DeviceName(dev) : null);
+        if (HoldPopups) _heldDuringCall++;
+        else _notifier.ShowOtp(o.Code, o.AppName, MultipleSources && dev.Length > 0 ? DeviceName(dev) : null);
         Log($"验证码已复制到剪贴板（来自 {o.AppName}，{o.Code.Length} 位）");
         // 2 分钟后若剪贴板没被改过，就清除
         var t = new DispatcherTimer { Interval = TimeSpan.FromMinutes(2) };

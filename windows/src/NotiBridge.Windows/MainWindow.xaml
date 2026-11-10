@@ -216,7 +216,7 @@
                 </ListBox>
             </DockPanel>
 
-            <Grid Grid.Column="1">
+            <Grid Grid.Column="1" x:Name="PageHost">
                 <!-- 概览 -->
                 <ScrollViewer x:Name="Page0" VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="24,20,28,24">
@@ -519,6 +519,8 @@
                             <StackPanel>
                                 <CheckBox Content="开机时自动启动" IsChecked="{Binding AutoStartEnabled}" />
                                 <CheckBox Content="在通知记录中显示内容" IsChecked="{Binding ShowContentInList}" Margin="0,8,0,0" />
+                                <CheckBox Content="通话期间不弹出通知（挂断后汇总提示）" IsChecked="{Binding QuietDuringCalls}" Margin="0,8,0,0"
+                                          Visibility="{Binding Esp32.UseEsp32, Converter={StaticResource BoolToVis}}" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
